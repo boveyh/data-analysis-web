@@ -47,7 +47,7 @@ PandaLens 把 pandas 的「一整套数据分析动作」搬进了浏览器：
 ### 3. 交互方便简洁
 
 * **智能默认值**：自动识别「ID 类字段」并排除，优先把 `revenue`、`profit` 这类真实度量作为 Y 轴；折线图会自动选用日期字段作为时间轴；
-* **示例数据一点即用**：3 个数据集（零售销售 / 鸢尾花 Iris / 小费 Tips）即时切换；
+* **经典数据集一键切换**：内置 10 个广为人知的数据集，覆盖分类、回归、时间序列、缺失值清洗等典型场景，从 144 行到 53,940 行不用下载任何文件即可切换；
 * **键盘快捷键**：`1–6` 切换标签页、`/` 聚焦搜索、`L` 切换语言、`T` 切换主题、`Ctrl/⌘ + Enter` 执行查询；
 * 每个操作实时反馈：Toast 提示、行数变化徽标、图表副标题显示数据点数量。
 
@@ -106,11 +106,38 @@ node tools/selftest.mjs      # 或 npm test
 
 覆盖 dtype 推断、describe（含 ddof=1 样本标准差与 numpy 线性插值分位数）、`value_counts`、`groupby` 多函数聚合、查询解析器、缺失值处理、Pearson/Spearman、直方图分箱、CSV 引号/转义/BOM/CRLF/重复表头解析，并与真实 iris 数据集的公开统计值（setosa `petal_length` 均值 1.464、virginica 5.552）做交叉校验。
 
-### 重新生成示例数据
+### 内置数据集
+
+侧边栏「经典数据集」中可在 10 个数据集之间随时切换，切换时会重置筛选 / 清洗 / 图表配置并生成新的 pandas 载入代码：
+
+| 数据集 | 规模 | 适合演示 |
+|---|---|---|
+| 零售销售 `sales` | 210 × 16 | 默认数据集，业务指标、分组聚合、Python 合成的可复现数据 |
+| 鸢尾花 `iris` | 150 × 5 | 最经典的分类数据集，描述统计与箱线图 |
+| 小费 `tips` | 244 × 7 | 分类 + 数值混合，分组聚合与频数分布 |
+| 泰坦尼克号 `titanic` | 891 × 15 | 真实数据、**含缺失值**，清洗与筛选的最佳素材 |
+| 帕尔默企鹅 `penguins` | 344 × 7 | 鸢尾花的现代替代，**含缺失值** |
+| 航班乘客 `flights` | 144 × 3 | 经典时间序列（Box–Jenkins 航空客流） |
+| 汽车油耗 `mpg` | 398 × 9 | 多变量回归、相关性分析 |
+| 世界各国 `gapminder` | 1,704 × 6 | 面板数据，国家 × 年份的二维聚合 |
+| 纽约出租车 `taxis` | 6,433 × 14 | 真实业务流水，含日期时间字段 |
+| 钻石 `diamonds` | 53,940 × 10 | 大数据量，价格分布与类别维度 |
+
+### 数据来源与维护
+
+`data/` 下的 CSV 全部原样取自公开数据源：
+
+* `sales.csv` —— 本项目合成，可用 `python tools/generate_sales.py` 重新生成；
+* 其余 9 个 —— seaborn 官方数据集仓库 [`mwaskom/seaborn-data`](https://github.com/mwaskom/seaborn-data)；
+* `gapminder.csv` —— [`plotly/datasets`](https://github.com/plotly/datasets) 的 Gapminder 五年度面板数据。
+
+侧边栏卡片上标注的行列数由 `tools/dataset-stats.mjs` 用**与应用完全相同的解析器**实测得出，不是手写的：
 
 ```bash
-python tools/generate_sales.py
+node tools/dataset-stats.mjs
 ```
+
+改动任何一个 CSV 之后重跑一次，即可核对 `js/app.js` 里 `SAMPLE_DEFS` 的标注是否仍然准确。
 
 ---
 
@@ -140,11 +167,19 @@ data-analysis-web/
 │   ├── i18n.js             # 中英双语词条与插值
 │   └── app.js              # 应用主控：管线、渲染、事件、代码生成
 ├── data/
-│   ├── sales.csv           # 默认数据集（合成，210 行 × 16 列）
-│   ├── iris.csv            # 150 × 5
-│   └── tips.csv            # 244 × 7
+│   ├── sales.csv           # 默认数据集（合成，210 × 16）
+│   ├── iris.csv            # 150 × 5     经典分类
+│   ├── tips.csv            # 244 × 7     账单与小费
+│   ├── titanic.csv         # 891 × 15    含缺失值
+│   ├── penguins.csv        # 344 × 7     含缺失值
+│   ├── flights.csv         # 144 × 3     时间序列
+│   ├── mpg.csv             # 398 × 9     多变量回归
+│   ├── gapminder.csv       # 1,704 × 6   面板数据
+│   ├── taxis.csv           # 6,433 × 14  时间字段
+│   └── diamonds.csv        # 53,940 × 10 大数据量
 ├── tools/
-│   ├── generate_sales.py   # 示例数据生成器（可复现）
+│   ├── generate_sales.py   # 默认数据集生成器（可复现）
+│   ├── dataset-stats.mjs   # 实测各数据集的行列数 / 体积 / 解析耗时
 │   └── selftest.mjs        # 引擎自测
 └── .nojekyll
 ```

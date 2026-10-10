@@ -39,10 +39,24 @@ const aggLabel = (fn) => AGG_LABEL[getLang()][fn] || fn;
 
 const AGG_SQL = { count: 'count', sum: 'sum', mean: 'mean', median: 'median', min: 'min', max: 'max', std: 'std', nunique: 'nunique' };
 
+/**
+ * The bundled catalogue of well-known public datasets, ordered from small and
+ * simple to large and messy so the list doubles as a suggested tour. Every CSV
+ * lives in data/ and is parsed by the same reader used for uploads, so `rows`
+ * and `cols` here are just labels for the picker — regenerate them with
+ * `node tools/dataset-stats.mjs` after changing any file.
+ */
 const SAMPLE_DEFS = [
-  { id: 'sales', file: 'data/sales.csv', icon: '🛒', key: 'sample.sales' },
-  { id: 'iris',  file: 'data/iris.csv',  icon: '🌸', key: 'sample.iris' },
-  { id: 'tips',  file: 'data/tips.csv',  icon: '🍽️', key: 'sample.tips' },
+  { id: 'sales',     file: 'data/sales.csv',     icon: '🛒', rows: 210,   cols: 16, key: 'sample.sales' },
+  { id: 'iris',      file: 'data/iris.csv',      icon: '🌸', rows: 150,   cols: 5,  key: 'sample.iris' },
+  { id: 'tips',      file: 'data/tips.csv',      icon: '🍽️', rows: 244,   cols: 7,  key: 'sample.tips' },
+  { id: 'titanic',   file: 'data/titanic.csv',   icon: '🚢', rows: 891,   cols: 15, key: 'sample.titanic' },
+  { id: 'penguins',  file: 'data/penguins.csv',  icon: '🐧', rows: 344,   cols: 7,  key: 'sample.penguins' },
+  { id: 'flights',   file: 'data/flights.csv',   icon: '✈️', rows: 144,   cols: 3,  key: 'sample.flights' },
+  { id: 'mpg',       file: 'data/mpg.csv',       icon: '🚗', rows: 398,   cols: 9,  key: 'sample.mpg' },
+  { id: 'gapminder', file: 'data/gapminder.csv', icon: '🌍', rows: 1704,  cols: 6,  key: 'sample.gapminder' },
+  { id: 'taxis',     file: 'data/taxis.csv',     icon: '🚕', rows: 6433,  cols: 14, key: 'sample.taxis' },
+  { id: 'diamonds',  file: 'data/diamonds.csv',  icon: '💎', rows: 53940, cols: 10, key: 'sample.diamonds' },
 ];
 
 const API_MAP = [
@@ -401,16 +415,23 @@ function renderSamples() {
   const box = $('#sampleList');
   box.innerHTML = '';
   for (const s of SAMPLE_DEFS) {
+    const name = t(`${s.key}.name`);
+    const desc = t(`${s.key}.desc`);
+    const size = t('sample.size', { rows: s.rows.toLocaleString(), cols: s.cols });
+
     const btn = el('button', {
       class: `sample-item${state.source === s.id ? ' is-active' : ''}`,
       type: 'button',
+      title: `${name} — ${size}\n${desc}`,
     });
-    btn.innerHTML = `
-      <span class="sample-ico">${s.icon}</span>
-      <span class="sample-txt">
-        <span class="sample-name">${esc(t(`${s.key}.name`))}</span>
-        <span class="sample-desc">${esc(t(`${s.key}.desc`))}</span>
-      </span>`;
+
+    const head = el('span', { class: 'sample-head' });
+    head.appendChild(el('span', { class: 'sample-ico', text: s.icon }));
+    head.appendChild(el('span', { class: 'sample-name', text: name }));
+
+    btn.appendChild(head);
+    btn.appendChild(el('span', { class: 'sample-desc', text: desc }));
+    btn.appendChild(el('span', { class: 'sample-meta', text: size }));
     btn.addEventListener('click', () => loadSample(s.id));
     box.appendChild(btn);
   }
