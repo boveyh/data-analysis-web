@@ -1,0 +1,5 @@
+# Normalise line endings so the deployed static files stay LF everywhere.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

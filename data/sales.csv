@@ -1,0 +1,211 @@
+order_id,order_date,region,city,category,product,channel,units,unit_price,discount,revenue,cost,profit,customer_age,rating,returned
+100001,2024-01-02,North,Tianjin,Grocery,Green Tea Gift,Offline,9,226.56,0.15,1733.18,1246.11,487.07,50,4.3,No
+100002,2024-01-04,West,Chongqing,Electronics,Smart Watch S9,Offline,1,1342.55,0.1,1208.3,899.16,309.14,35,4.2,No
+100003,2024-01-05,North,Jinan,Electronics,4K Monitor 27,Partner,1,2008.89,0.2,1607.11,1022.63,584.48,18,3.5,No
+100004,2024-01-06,South,Guangzhou,Grocery,Almond Nuts 500g,Offline,3,75.89,0.05,216.29,156.7,59.59,32,4.8,No
+100005,2024-01-07,West,Xi'an,Beauty,Hair Dryer Pro,Offline,5,458.93,0,2294.65,1504.46,790.19,41,5.0,No
+100006,2024-01-09,Central,Changsha,Sports,Dumbbell Set 20kg,Online,8,423.44,0.15,2879.39,2242.49,636.9,32,4.1,No
+100007,2024-01-11,North,Jinan,Apparel,Denim Jacket,Online,7,397.45,0.05,2643.04,1520.91,1122.13,20,3.3,No
+100008,2024-01-13,East,Shanghai,Home,Air Purifier,Offline,1,1132.53,0,1132.53,770.03,362.5,44,4.0,No
+100009,2024-01-14,Central,Wuhan,Electronics,Smart Watch S9,Online,6,1552.31,0.1,8382.47,4761.46,3621.01,32,3.9,No
+100010,2024-01-16,Central,Changsha,Home,Air Purifier,Online,6,1244.92,0,7469.52,5414.99,2054.53,25,4.1,No
+100011,2024-01-18,North,Beijing,Beauty,Hair Dryer Pro,Online,5,491.96,0,2459.8,1534.94,924.86,27,4.3,No
+100012,2024-01-21,North,Tianjin,Home,Coffee Machine,Online,2,844.61,0.05,1604.76,1215.08,389.68,40,3.5,No
+100013,2024-01-24,North,Beijing,Apparel,Down Jacket,Partner,1,475.83,0.15,404.46,302.39,102.07,30,4.9,No
+100014,2024-01-26,East,Nanjing,Grocery,Green Tea Gift,Online,1,226.52,0.25,169.89,95.61,74.28,18,5.0,No
+100015,2024-01-29,South,Xiamen,Electronics,Laptop Pro 14,Offline,4,6712.15,0.1,24163.74,15858.77,8304.97,49,4.7,No
+100016,2024-01-30,East,Shanghai,Electronics,Laptop Pro 14,Online,3,6833.57,0.2,16400.57,12376.03,4024.54,18,3.9,No
+100017,2024-01-31,North,Tianjin,Beauty,Face Mask Box,Offline,3,82.72,0.15,210.94,132.68,78.26,38,3.2,No
+100018,2024-02-01,East,Nanjing,Beauty,Face Mask Box,Offline,4,86.22,0.15,293.15,185.76,107.39,33,4.4,No
+100019,2024-02-03,East,Hangzhou,Electronics,Smart Watch S9,Online,7,1368.55,0.25,7184.89,4866.11,2318.78,37,4.6,No
+100020,2024-02-05,North,Beijing,Apparel,Wool Sweater,Online,6,269.65,0,1617.9,1037.05,580.85,38,4.9,No
+100021,2024-02-07,East,Shanghai,Electronics,Smart Watch S9,Online,4,1357.92,0.1,4888.51,3550.72,1337.79,51,4.7,No
+100022,2024-02-08,East,Shanghai,Apparel,Wool Sweater,Online,2,255.57,0.2,408.91,326.38,82.53,45,5.0,No
+100023,2024-02-09,North,Jinan,Home,Coffee Machine,Online,7,814.62,0.1,5132.11,3136.94,1995.17,38,4.1,No
+100024,2024-02-11,Central,Zhengzhou,Electronics,4K Monitor 27,Online,3,2103.92,0.25,4733.82,3256.17,1477.65,25,4.3,No
+100025,2024-02-13,South,Shenzhen,Home,Coffee Machine,Partner,7,771.74,0,5402.18,4034.91,1367.27,31,3.9,No
+100026,2024-02-15,East,Nanjing,Apparel,Denim Jacket,Online,8,352.06,0,2816.48,2025.34,791.14,46,4.4,No
+100027,2024-02-17,South,Guangzhou,Grocery,Olive Oil 1L,Partner,4,92.76,0,371.04,298.31,72.73,29,5.0,No
+100028,2024-02-18,West,Chengdu,Electronics,Laptop Pro 14,Offline,2,6763.65,0.1,12174.57,7971.8,4202.77,28,3.8,No
+100029,2024-02-20,West,Xi'an,Home,Robot Vacuum,Online,1,2088.95,0.1,1880.05,1198.66,681.39,31,3.8,No
+100030,2024-02-22,North,Jinan,Grocery,Green Tea Gift,Offline,2,221.12,0.05,420.13,269.38,150.75,18,3.6,No
+100031,2024-02-25,West,Xi'an,Home,Coffee Machine,Offline,2,756.56,0,1513.12,1057.89,455.23,34,4.7,No
+100032,2024-02-26,East,Shanghai,Apparel,Denim Jacket,Partner,4,427.49,0.2,1367.97,995.81,372.16,23,4.3,No
+100033,2024-02-28,East,Shanghai,Apparel,Denim Jacket,Online,5,410.21,0.15,1743.39,1193.5,549.89,26,4.9,No
+100034,2024-03-01,East,Hangzhou,Apparel,Down Jacket,Partner,4,486.36,0,1945.44,1216.49,728.95,28,5.0,No
+100035,2024-03-02,South,Guangzhou,Electronics,Smart Watch S9,Online,4,1388.15,0.1,4997.34,2864.02,2133.32,51,4.4,No
+100036,2024-03-03,West,Chongqing,Beauty,Face Mask Box,Online,1,78.47,0,78.47,48.46,30.01,34,4.1,No
+100037,2024-03-06,East,Nanjing,Home,Desk Lamp,Online,2,150.07,0,300.14,222.43,77.71,29,4.6,No
+100038,2024-03-08,East,Hangzhou,Electronics,4K Monitor 27,Offline,2,2225.59,0,4451.18,3313.29,1137.89,40,3.5,No
+100039,2024-03-10,East,Shanghai,Apparel,Wool Sweater,Partner,7,238.51,0.1,1502.61,1086.72,415.89,35,3.8,No
+100040,2024-03-11,North,Tianjin,Apparel,Denim Jacket,Partner,1,353.78,0.1,318.4,188.79,129.61,30,3.5,No
+100041,2024-03-12,Central,Zhengzhou,Sports,Camping Tent,Offline,1,844.26,0.1,759.83,524.7,235.13,37,4.6,No
+100042,2024-03-14,Central,Changsha,Electronics,4K Monitor 27,Online,6,2303.16,0.25,10364.22,6572.85,3791.37,22,5.0,No
+100043,2024-03-15,East,Hangzhou,Apparel,Wool Sweater,Online,1,234.66,0.05,222.93,117.75,105.18,28,5.0,No
+100044,2024-03-17,South,Guangzhou,Electronics,Noise-Cancel Headset,Offline,1,834.23,0.05,792.52,637.31,155.21,37,4.8,No
+100045,2024-03-19,East,Shanghai,Home,Coffee Machine,Online,7,868.58,0.1,5472.05,3961.25,1510.8,45,3.4,No
+100046,2024-03-21,East,Nanjing,Home,Robot Vacuum,Offline,1,2518.6,0,2518.6,1844.83,673.77,35,3.2,No
+100047,2024-03-22,East,Shanghai,Electronics,4K Monitor 27,Offline,1,2184.08,0,2184.08,1524.94,659.14,39,3.6,No
+100048,2024-03-24,East,Shanghai,Beauty,Hair Dryer Pro,Offline,4,544.77,0,2179.08,1611.17,567.91,25,4.4,Yes
+100049,2024-03-25,South,Xiamen,Electronics,4K Monitor 27,Online,4,2041.67,0.05,7758.35,4871.79,2886.56,51,4.5,No
+100050,2024-03-26,South,Guangzhou,Home,Coffee Machine,Online,1,804.85,0.15,684.12,465.0,219.12,29,4.5,No
+100051,2024-03-27,East,Shanghai,Apparel,Denim Jacket,Online,6,415.62,0,2493.72,1423.12,1070.6,33,5.0,No
+100052,2024-03-28,East,Shanghai,Beauty,Face Mask Box,Offline,6,96.68,0,580.08,394.02,186.06,23,4.7,No
+100053,2024-03-31,North,Beijing,Apparel,Running Shoes,Partner,2,354.86,0.2,567.78,424.98,142.8,41,4.2,No
+100054,2024-04-02,East,Shanghai,Apparel,Down Jacket,Online,4,418.22,0.05,1589.24,879.2,710.04,22,5.0,No
+100055,2024-04-04,South,Shenzhen,Sports,Cycling Helmet,Offline,1,295.57,0.1,266.01,207.34,58.67,46,3.6,No
+100056,2024-04-07,East,Shanghai,Electronics,Laptop Pro 14,Online,2,5686.4,0.2,9098.24,5589.33,3508.91,32,3.4,No
+100057,2024-04-09,North,Beijing,Beauty,Face Mask Box,Partner,4,79.08,0.1,284.69,206.07,78.62,56,4.2,No
+100058,2024-04-12,North,Jinan,Home,Coffee Machine,Online,7,858.47,0.25,4506.97,2753.32,1753.65,46,4.4,No
+100059,2024-04-13,Central,Changsha,Apparel,Wool Sweater,Offline,1,249.32,0.05,236.85,150.86,85.99,40,4.0,No
+100060,2024-04-16,North,Jinan,Apparel,Down Jacket,Partner,7,495.24,0,3466.68,2703.72,762.96,38,3.6,Yes
+100061,2024-04-17,South,Xiamen,Electronics,Smart Watch S9,Online,6,1444.3,0.05,8232.51,5978.11,2254.4,42,4.0,No
+100062,2024-04-20,Central,Zhengzhou,Grocery,Olive Oil 1L,Offline,1,92.75,0,92.75,63.3,29.45,41,5.0,No
+100063,2024-04-22,North,Tianjin,Home,Robot Vacuum,Offline,6,2079.37,0,12476.22,9505.57,2970.65,38,4.5,No
+100064,2024-04-23,West,Xi'an,Grocery,Almond Nuts 500g,Partner,6,68.76,0.05,391.93,276.14,115.79,40,4.6,No
+100065,2024-04-26,East,Shanghai,Electronics,Smart Watch S9,Online,1,1500.6,0.2,1200.48,822.12,378.36,18,3.3,No
+100066,2024-04-27,Central,Changsha,Electronics,4K Monitor 27,Online,3,2012.79,0.05,5736.45,4160.51,1575.94,48,4.3,No
+100067,2024-04-29,East,Nanjing,Electronics,Laptop Pro 14,Offline,4,5524.84,0.05,20994.39,13706.79,7287.6,40,3.8,No
+100068,2024-04-30,South,Guangzhou,Apparel,Denim Jacket,Online,9,355.79,0.1,2881.9,1767.88,1114.02,34,4.3,No
+100069,2024-05-01,South,Guangzhou,Sports,Dumbbell Set 20kg,Offline,1,380.83,0.15,323.71,223.1,100.61,24,5.0,No
+100070,2024-05-02,South,Shenzhen,Grocery,Olive Oil 1L,Partner,13,104.03,0,1352.39,887.63,464.76,43,3.6,No
+100071,2024-05-03,South,Xiamen,Apparel,Running Shoes,Offline,1,343.82,0.25,257.87,180.42,77.45,19,4.3,No
+100072,2024-05-04,South,Guangzhou,Electronics,Noise-Cancel Headset,Online,5,876.97,0.1,3946.37,2252.79,1693.58,35,4.5,No
+100073,2024-05-07,North,Tianjin,Grocery,Organic Coffee Bean,Partner,1,142.55,0.2,114.04,70.7,43.34,46,4.0,No
+100074,2024-05-09,North,Tianjin,Sports,Yoga Mat,Online,4,129.22,0,516.88,375.37,141.51,28,3.7,No
+100075,2024-05-12,South,Guangzhou,Sports,Dumbbell Set 20kg,Offline,6,426.22,0.1,2301.59,1711.0,590.59,41,4.6,No
+100076,2024-05-13,East,Shanghai,Grocery,Organic Coffee Bean,Offline,5,135.88,0.15,577.49,365.41,212.08,58,5.0,No
+100077,2024-05-16,South,Shenzhen,Electronics,Laptop Pro 14,Online,2,6674.59,0,13349.18,9356.35,3992.83,26,4.2,No
+100078,2024-05-17,East,Shanghai,Sports,Dumbbell Set 20kg,Online,3,407.65,0.25,917.21,624.84,292.37,18,4.5,No
+100079,2024-05-18,South,Guangzhou,Home,Coffee Machine,Partner,1,693.49,0.1,624.14,439.02,185.12,38,4.5,No
+100080,2024-05-20,East,Hangzhou,Electronics,Noise-Cancel Headset,Partner,2,818.34,0,1636.68,1118.77,517.91,19,4.4,No
+100081,2024-05-23,East,Shanghai,Home,Desk Lamp,Online,3,175.96,0,527.88,383.53,144.35,21,3.9,No
+100082,2024-05-26,South,Xiamen,Grocery,Olive Oil 1L,Offline,3,89.54,0.2,214.9,161.42,53.48,23,4.1,No
+100083,2024-05-28,East,Nanjing,Sports,Cycling Helmet,Online,1,265.46,0.1,238.91,126.23,112.68,32,4.3,No
+100084,2024-05-30,West,Xi'an,Electronics,Noise-Cancel Headset,Partner,4,811.79,0,3247.16,2265.28,981.88,42,3.3,No
+100085,2024-05-31,East,Shanghai,Home,Desk Lamp,Partner,4,178.05,0.15,605.37,487.62,117.75,37,3.9,No
+100086,2024-06-01,East,Hangzhou,Electronics,Noise-Cancel Headset,Online,4,978.93,0,3915.72,2098.2,1817.52,25,4.1,No
+100087,2024-06-03,East,Shanghai,Sports,Dumbbell Set 20kg,Online,5,377.16,0.2,1508.64,818.73,689.91,22,4.8,No
+100088,2024-06-05,Central,Zhengzhou,Electronics,Noise-Cancel Headset,Partner,1,850.2,0,850.2,499.68,350.52,54,3.6,No
+100089,2024-06-06,North,Jinan,Grocery,Organic Coffee Bean,Online,2,120.09,0.1,216.16,147.61,68.55,34,4.0,No
+100090,2024-06-08,North,Beijing,Grocery,Green Tea Gift,Offline,5,210.68,0.2,842.72,662.68,180.04,23,3.6,No
+100091,2024-06-10,East,Nanjing,Electronics,Smart Watch S9,Online,5,1577.02,0,7885.1,5547.88,2337.22,28,4.5,No
+100092,2024-06-12,East,Shanghai,Home,Coffee Machine,Partner,1,718.12,0.1,646.31,456.59,189.72,34,4.1,No
+100093,2024-06-13,East,Nanjing,Apparel,Down Jacket,Online,1,446.17,0.2,356.94,273.34,83.6,33,4.5,No
+100094,2024-06-16,South,Xiamen,Apparel,Running Shoes,Partner,9,345.28,0.05,2952.14,1867.63,1084.51,42,5.0,Yes
+100095,2024-06-17,Central,Wuhan,Apparel,Running Shoes,Offline,5,325.41,0.15,1382.99,1006.55,376.44,39,3.7,No
+100096,2024-06-20,East,Shanghai,Electronics,Smart Watch S9,Online,5,1508.23,0.25,5655.86,4465.71,1190.15,49,4.4,No
+100097,2024-06-22,North,Tianjin,Apparel,Denim Jacket,Online,10,420.08,0.05,3990.76,2259.78,1730.98,39,4.7,No
+100098,2024-06-24,East,Shanghai,Sports,Dumbbell Set 20kg,Online,10,432.08,0,4320.8,2786.37,1534.43,42,5.0,No
+100099,2024-06-26,East,Hangzhou,Grocery,Organic Coffee Bean,Online,5,126.78,0.1,570.51,358.1,212.41,38,3.8,No
+100100,2024-06-27,East,Nanjing,Apparel,Running Shoes,Online,1,310.46,0.25,232.84,149.07,83.77,41,4.5,No
+100101,2024-06-30,West,Xi'an,Electronics,Noise-Cancel Headset,Partner,6,862.22,0,5173.32,3205.13,1968.19,36,3.8,No
+100102,2024-07-01,South,Xiamen,Electronics,Laptop Pro 14,Offline,3,6325.77,0.05,18028.44,13013.48,5014.96,23,4.0,No
+100103,2024-07-02,South,Shenzhen,Apparel,Denim Jacket,Partner,4,382.76,0,1531.04,989.63,541.41,18,4.2,No
+100104,2024-07-04,North,Beijing,Home,Desk Lamp,Online,1,170.53,0.05,162.0,109.63,52.37,33,4.1,No
+100105,2024-07-05,North,Jinan,Grocery,Green Tea Gift,Online,5,213.72,0.1,961.74,565.71,396.03,28,4.2,No
+100106,2024-07-07,West,Xi'an,Home,Air Purifier,Offline,3,1208.43,0.1,3262.76,2307.73,955.03,36,3.7,No
+100107,2024-07-08,West,Xi'an,Electronics,Smart Watch S9,Online,4,1592.71,0,6370.84,4321.3,2049.54,35,4.9,No
+100108,2024-07-11,Central,Zhengzhou,Beauty,Face Mask Box,Online,1,79.32,0.15,67.42,47.15,20.27,35,4.1,No
+100109,2024-07-13,Central,Wuhan,Home,Robot Vacuum,Offline,1,2613.75,0.1,2352.38,1720.04,632.34,24,4.0,No
+100110,2024-07-16,East,Nanjing,Grocery,Green Tea Gift,Offline,1,191.24,0.1,172.12,128.96,43.16,38,4.9,No
+100111,2024-07-17,East,Hangzhou,Home,Desk Lamp,Online,6,178.05,0.1,961.47,663.67,297.8,24,3.6,No
+100112,2024-07-18,North,Jinan,Home,Air Purifier,Online,7,1165.4,0.1,7342.02,4476.58,2865.44,27,3.8,No
+100113,2024-07-21,East,Hangzhou,Sports,Dumbbell Set 20kg,Online,3,405.0,0.05,1154.25,664.17,490.08,33,4.1,No
+100114,2024-07-24,West,Chongqing,Grocery,Green Tea Gift,Online,2,206.56,0.1,371.81,286.1,85.71,42,3.6,No
+100115,2024-07-26,North,Beijing,Sports,Camping Tent,Offline,1,736.98,0,736.98,589.05,147.93,42,3.6,No
+100116,2024-07-28,East,Shanghai,Home,Coffee Machine,Online,4,795.0,0,3180.0,2147.76,1032.24,28,3.9,No
+100117,2024-07-30,East,Hangzhou,Electronics,Laptop Pro 14,Offline,7,6429.82,0.05,42758.3,27058.02,15700.28,26,5.0,No
+100118,2024-07-31,South,Guangzhou,Home,Desk Lamp,Offline,4,142.57,0,570.28,482.66,87.62,44,4.5,No
+100119,2024-08-02,North,Beijing,Home,Robot Vacuum,Offline,1,2231.58,0.15,1896.84,1482.46,414.38,36,3.6,No
+100120,2024-08-03,East,Hangzhou,Home,Desk Lamp,Partner,6,161.97,0.1,874.64,497.21,377.43,25,3.5,No
+100121,2024-08-04,North,Beijing,Electronics,Noise-Cancel Headset,Offline,3,852.29,0.15,2173.34,1462.72,710.62,33,4.4,No
+100122,2024-08-06,South,Shenzhen,Home,Coffee Machine,Online,3,740.55,0.25,1666.24,1010.69,655.55,34,5.0,No
+100123,2024-08-07,North,Jinan,Apparel,Denim Jacket,Online,6,421.31,0.15,2148.68,1605.39,543.29,35,4.9,No
+100124,2024-08-10,East,Nanjing,Sports,Yoga Mat,Offline,1,156.37,0.1,140.73,96.67,44.06,21,4.2,No
+100125,2024-08-12,North,Jinan,Sports,Dumbbell Set 20kg,Online,1,387.79,0,387.79,276.07,111.72,27,3.4,No
+100126,2024-08-14,South,Xiamen,Apparel,Denim Jacket,Online,3,428.15,0.2,1027.56,573.42,454.14,47,4.4,No
+100127,2024-08-15,East,Nanjing,Electronics,Laptop Pro 14,Online,6,6453.49,0,38720.94,26239.09,12481.85,21,4.1,No
+100128,2024-08-17,South,Xiamen,Grocery,Olive Oil 1L,Partner,1,93.32,0,93.32,59.72,33.6,45,4.7,No
+100129,2024-08-20,East,Hangzhou,Electronics,4K Monitor 27,Partner,3,1921.37,0.05,5475.9,3642.1,1833.8,32,5.0,No
+100130,2024-08-21,East,Nanjing,Home,Desk Lamp,Online,6,154.65,0.1,835.11,675.28,159.83,33,4.0,No
+100131,2024-08-23,West,Xi'an,Electronics,Laptop Pro 14,Offline,1,6649.34,0,6649.34,4707.25,1942.09,52,5.0,No
+100132,2024-08-26,West,Chengdu,Grocery,Almond Nuts 500g,Partner,5,71.19,0.1,320.36,269.32,51.04,34,4.4,No
+100133,2024-08-28,West,Xi'an,Grocery,Almond Nuts 500g,Online,1,70.93,0,70.93,40.09,30.84,42,3.7,No
+100134,2024-08-29,West,Chongqing,Apparel,Denim Jacket,Online,5,358.83,0,1794.15,1150.95,643.2,39,3.7,Yes
+100135,2024-08-30,North,Tianjin,Home,Robot Vacuum,Online,3,2417.76,0.1,6527.95,4997.48,1530.47,35,3.8,No
+100136,2024-09-01,South,Guangzhou,Grocery,Almond Nuts 500g,Online,1,68.6,0,68.6,44.4,24.2,36,4.2,No
+100137,2024-09-03,East,Hangzhou,Beauty,Hair Dryer Pro,Offline,1,522.89,0,522.89,353.27,169.62,34,5.0,No
+100138,2024-09-04,East,Hangzhou,Sports,Cycling Helmet,Online,3,272.18,0,816.54,467.67,348.87,58,5.0,No
+100139,2024-09-06,East,Nanjing,Electronics,4K Monitor 27,Online,1,1995.95,0.1,1796.36,1242.64,553.72,35,5.0,No
+100140,2024-09-08,East,Shanghai,Electronics,Laptop Pro 14,Online,8,5552.49,0.15,37756.93,23470.33,14286.6,33,4.3,No
+100141,2024-09-09,Central,Zhengzhou,Electronics,4K Monitor 27,Offline,1,2199.73,0.1,1979.76,1358.19,621.57,32,3.8,No
+100142,2024-09-10,North,Beijing,Apparel,Wool Sweater,Online,4,260.7,0,1042.8,751.43,291.37,22,3.8,Yes
+100143,2024-09-12,East,Hangzhou,Electronics,Laptop Pro 14,Online,5,6485.26,0.05,30804.99,20474.29,10330.7,18,5.0,No
+100144,2024-09-14,North,Beijing,Sports,Yoga Mat,Partner,3,152.02,0.15,387.65,267.04,120.61,55,3.8,No
+100145,2024-09-17,Central,Zhengzhou,Grocery,Olive Oil 1L,Online,1,103.75,0,103.75,66.29,37.46,31,5.0,No
+100146,2024-09-19,South,Guangzhou,Apparel,Wool Sweater,Offline,3,278.76,0.25,627.21,341.65,285.56,42,4.2,No
+100147,2024-09-20,Central,Wuhan,Electronics,Noise-Cancel Headset,Offline,7,883.12,0,6181.84,3880.94,2300.9,30,4.8,No
+100148,2024-09-21,East,Hangzhou,Apparel,Wool Sweater,Online,7,269.15,0,1884.05,1260.79,623.26,46,4.5,No
+100149,2024-09-23,South,Guangzhou,Sports,Camping Tent,Partner,2,827.09,0.1,1488.76,1126.4,362.36,38,4.2,No
+100150,2024-09-24,South,Guangzhou,Grocery,Almond Nuts 500g,Partner,5,75.79,0.1,341.06,224.21,116.85,18,5.0,No
+100151,2024-09-27,North,Beijing,Apparel,Running Shoes,Offline,5,295.32,0.05,1402.77,968.18,434.59,38,3.3,No
+100152,2024-09-30,East,Hangzhou,Apparel,Wool Sweater,Partner,5,231.7,0,1158.5,951.91,206.59,40,4.7,No
+100153,2024-10-01,North,Beijing,Grocery,Green Tea Gift,Offline,7,223.01,0.1,1404.96,868.46,536.5,25,5.0,No
+100154,2024-10-02,East,Shanghai,Apparel,Wool Sweater,Offline,4,284.97,0.15,968.9,599.76,369.14,51,3.7,No
+100155,2024-10-03,East,Hangzhou,Grocery,Organic Coffee Bean,Offline,5,125.84,0.2,503.36,332.12,171.24,32,4.1,No
+100156,2024-10-05,West,Xi'an,Home,Coffee Machine,Online,8,735.03,0.1,5292.22,3031.03,2261.19,48,4.0,No
+100157,2024-10-07,North,Tianjin,Grocery,Green Tea Gift,Online,2,205.91,0.25,308.87,165.92,142.95,49,4.2,No
+100158,2024-10-10,Central,Zhengzhou,Home,Desk Lamp,Partner,10,177.06,0,1770.6,1027.41,743.19,31,4.6,No
+100159,2024-10-13,North,Tianjin,Apparel,Down Jacket,Online,3,494.32,0.1,1334.66,834.78,499.88,38,3.6,No
+100160,2024-10-16,North,Beijing,Electronics,Smart Watch S9,Partner,7,1436.73,0.05,9554.25,6879.68,2674.57,41,4.8,No
+100161,2024-10-18,East,Shanghai,Apparel,Denim Jacket,Offline,6,430.44,0.1,2324.38,1453.33,871.05,33,3.7,No
+100162,2024-10-19,South,Guangzhou,Electronics,Noise-Cancel Headset,Online,3,956.78,0.15,2439.79,1810.36,629.43,40,3.9,No
+100163,2024-10-20,West,Xi'an,Apparel,Down Jacket,Online,4,446.13,0,1784.52,1180.62,603.9,33,4.7,No
+100164,2024-10-21,South,Guangzhou,Electronics,Laptop Pro 14,Online,1,6105.13,0.1,5494.62,3515.67,1978.95,36,3.7,No
+100165,2024-10-24,North,Beijing,Electronics,Noise-Cancel Headset,Online,1,811.02,0,811.02,531.67,279.35,40,4.5,No
+100166,2024-10-25,East,Nanjing,Sports,Cycling Helmet,Partner,7,317.05,0,2219.35,1543.8,675.55,46,4.4,No
+100167,2024-10-26,North,Beijing,Grocery,Green Tea Gift,Online,5,192.25,0.05,913.19,603.81,309.38,40,4.4,No
+100168,2024-10-27,East,Shanghai,Home,Desk Lamp,Online,4,160.31,0,641.24,362.46,278.78,30,4.5,No
+100169,2024-10-28,Central,Zhengzhou,Grocery,Olive Oil 1L,Online,4,101.62,0,406.48,305.68,100.8,33,4.5,No
+100170,2024-10-30,East,Shanghai,Home,Robot Vacuum,Online,9,2365.18,0,21286.62,13962.86,7323.76,42,4.2,No
+100171,2024-10-31,Central,Wuhan,Home,Coffee Machine,Offline,1,722.37,0,722.37,496.44,225.93,39,4.7,No
+100172,2024-11-01,South,Xiamen,Electronics,Noise-Cancel Headset,Partner,9,965.27,0.25,6515.57,3998.76,2516.81,29,4.9,No
+100173,2024-11-03,East,Shanghai,Beauty,Hair Dryer Pro,Partner,12,519.98,0.25,4679.82,2979.25,1700.57,36,4.8,No
+100174,2024-11-05,East,Shanghai,Electronics,Laptop Pro 14,Offline,5,6532.95,0,32664.75,22127.99,10536.76,40,4.6,No
+100175,2024-11-07,East,Shanghai,Electronics,Noise-Cancel Headset,Offline,1,852.37,0.1,767.13,608.35,158.78,40,4.5,No
+100176,2024-11-09,West,Chengdu,Electronics,Smart Watch S9,Offline,4,1285.06,0.2,4112.19,2397.23,1714.96,19,4.2,No
+100177,2024-11-10,East,Shanghai,Home,Coffee Machine,Offline,7,706.13,0.1,4448.62,3294.69,1153.93,44,3.6,No
+100178,2024-11-11,South,Guangzhou,Beauty,Hair Dryer Pro,Online,1,499.94,0.2,399.95,256.68,143.27,32,4.8,No
+100179,2024-11-12,West,Chengdu,Beauty,Sunscreen SPF50,Online,7,118.52,0.25,622.23,375.21,247.02,24,3.8,No
+100180,2024-11-15,Central,Wuhan,Sports,Dumbbell Set 20kg,Online,4,417.5,0.25,1252.5,911.41,341.09,31,4.8,No
+100181,2024-11-16,North,Beijing,Grocery,Almond Nuts 500g,Offline,5,68.1,0,340.5,223.08,117.42,25,4.1,No
+100182,2024-11-17,South,Guangzhou,Apparel,Running Shoes,Online,8,355.41,0,2843.28,1860.26,983.02,35,4.8,No
+100183,2024-11-18,Central,Wuhan,Sports,Yoga Mat,Online,6,154.82,0,928.92,544.91,384.01,30,4.0,No
+100184,2024-11-19,South,Shenzhen,Electronics,Laptop Pro 14,Partner,12,6731.71,0.1,72702.47,48579.72,24122.75,26,3.7,No
+100185,2024-11-20,North,Beijing,Grocery,Organic Coffee Bean,Partner,10,117.81,0,1178.1,891.25,286.85,31,3.5,No
+100186,2024-11-21,Central,Zhengzhou,Home,Robot Vacuum,Online,7,2599.89,0.05,17289.27,13435.58,3853.69,45,4.2,No
+100187,2024-11-23,North,Jinan,Electronics,Smart Watch S9,Offline,2,1347.73,0,2695.46,1526.89,1168.57,34,3.7,No
+100188,2024-11-25,North,Jinan,Apparel,Down Jacket,Online,4,492.54,0.2,1576.13,919.9,656.23,37,3.9,No
+100189,2024-11-27,East,Shanghai,Grocery,Almond Nuts 500g,Partner,11,72.51,0.05,757.73,579.81,177.92,39,4.3,No
+100190,2024-11-28,South,Shenzhen,Sports,Dumbbell Set 20kg,Offline,10,452.66,0.15,3847.61,2554.74,1292.87,43,4.9,No
+100191,2024-11-29,North,Tianjin,Electronics,Laptop Pro 14,Partner,4,5777.7,0.1,20799.72,17292.24,3507.48,44,4.6,No
+100192,2024-12-01,East,Nanjing,Apparel,Denim Jacket,Online,5,422.83,0.25,1585.61,1105.95,479.66,24,4.5,No
+100193,2024-12-03,North,Jinan,Electronics,Smart Watch S9,Online,4,1352.87,0,5411.48,3485.25,1926.23,24,4.5,No
+100194,2024-12-05,Central,Zhengzhou,Home,Air Purifier,Online,8,1296.18,0.05,9850.97,6374.5,3476.47,25,4.1,No
+100195,2024-12-06,East,Shanghai,Electronics,Laptop Pro 14,Online,2,6198.68,0.05,11777.49,7395.8,4381.69,45,4.1,No
+100196,2024-12-08,Central,Wuhan,Sports,Yoga Mat,Online,8,136.54,0.2,873.86,469.22,404.64,50,3.7,No
+100197,2024-12-09,West,Chengdu,Sports,Dumbbell Set 20kg,Partner,1,392.75,0.1,353.48,266.64,86.84,46,4.7,No
+100198,2024-12-10,North,Beijing,Home,Desk Lamp,Online,6,151.18,0.1,816.37,517.82,298.55,41,4.4,No
+100199,2024-12-11,West,Chengdu,Electronics,Smart Watch S9,Offline,3,1411.64,0,4234.92,2866.8,1368.12,30,4.0,No
+100200,2024-12-12,West,Xi'an,Electronics,4K Monitor 27,Online,12,2320.87,0.15,23672.87,16700.66,6972.21,20,3.0,No
+100201,2024-12-13,North,Tianjin,Apparel,Wool Sweater,Online,6,233.69,0,1402.14,940.83,461.31,35,3.0,No
+100202,2024-12-15,South,Shenzhen,Apparel,Running Shoes,Online,8,324.1,0,2592.8,1512.0,1080.8,23,3.8,No
+100203,2024-12-18,South,Xiamen,Home,Robot Vacuum,Online,1,2191.7,0,2191.7,1246.03,945.67,24,3.8,No
+100204,2024-12-19,Central,Zhengzhou,Home,Coffee Machine,Online,5,802.56,0.2,3210.24,2275.43,934.81,41,4.2,No
+100205,2024-12-21,West,Chongqing,Sports,Dumbbell Set 20kg,Offline,7,427.83,0.1,2695.33,1642.21,1053.12,27,4.9,No
+100206,2024-12-22,Central,Changsha,Apparel,Running Shoes,Offline,7,315.59,0.1,1988.22,1514.82,473.4,44,4.4,No
+100207,2024-12-25,East,Shanghai,Beauty,Face Mask Box,Online,2,84.27,0,168.54,118.08,50.46,32,4.3,No
+100208,2024-12-26,North,Beijing,Electronics,Laptop Pro 14,Offline,5,6491.85,0.05,30836.29,19633.89,11202.4,20,3.5,No
+100209,2024-12-27,West,Chongqing,Home,Robot Vacuum,Partner,16,2126.84,0.2,27223.55,21205.07,6018.48,37,3.5,No
+100210,2024-12-30,South,Xiamen,Electronics,Laptop Pro 14,Online,9,5792.77,0.1,46921.44,40267.27,6654.17,40,3.4,No
