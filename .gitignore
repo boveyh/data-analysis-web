@@ -1,0 +1,8 @@
+# WorkBuddy publish marker (internal artifact tracking, not part of the site)
+.wbapp_*.genie
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+node_modules/
