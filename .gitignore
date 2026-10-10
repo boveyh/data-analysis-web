@@ -1,5 +1,6 @@
-# WorkBuddy publish marker (internal artifact tracking, not part of the site)
+# WorkBuddy workspace metadata (publish markers / app ids — kept on disk, not in the repo)
 .wbapp_*.genie
+.workbuddy/
 
 # OS / editor noise
 .DS_Store
