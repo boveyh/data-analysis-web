@@ -3,7 +3,12 @@
  * Run with:  node tools/selftest.mjs      (or: npm test)
  * ========================================================================== */
 
-import { DataFrame, describeSeries, histogram, quantile } from '../js/dataframe.js';
+import {
+  DataFrame, describeSeries, histogram, quantile,
+  gammaln, chi2PValue, tPValue, fPValue,
+  chiSquareTest, welchTTest, oneWayAnova,
+  missingMatrix, numericMatrix,
+} from '../js/dataframe.js';
 import { parseDelimited, matrixToColumns, parseJSONRecords, detectDelimiter } from '../js/parse.js';
 import { readFileSync } from 'node:fs';
 
@@ -108,6 +113,105 @@ const h = histogram([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5);
 eq('histogram bins', h.counts.length, 5);
 eq('histogram total', h.counts.reduce((a, b) => a + b, 0), 10);
 
+/* ---- distribution tails ----
+ * Pinned against the published critical values every statistics table lists,
+ * NOT against our own output — so a sign error or a swapped parameter in the
+ * continued-fraction code cannot pass unnoticed. Each row is the statistic
+ * value whose upper tail is exactly 0.05 for the given degrees of freedom. */
+console.log('\ndistribution tails (vs published 5% critical values)');
+
+eq('lgamma(5) = ln 24', gammaln(5), Math.log(24), 1e-10);
+
+const CHI2_CRIT = [[1, 3.841459], [2, 5.991465], [5, 11.070498], [10, 18.307038]];
+for (const [dfv, crit] of CHI2_CRIT) {
+  eq(`chi2PValue(${crit}, ${dfv}) = 0.05`, chi2PValue(crit, dfv), 0.05, 1e-4);
+}
+
+const T_CRIT = [[1, 12.706205], [5, 2.570582], [10, 2.228139], [30, 2.042272], [100, 1.983972]];
+for (const [dfv, crit] of T_CRIT) {
+  eq(`tPValue(±${crit}, ${dfv}) = 0.05`, tPValue(crit, dfv), 0.05, 1e-4);
+}
+eq('tPValue is symmetric', tPValue(-2.228139, 10), tPValue(2.228139, 10), 1e-12);
+
+const F_CRIT = [[1, 10, 4.964603], [2, 12, 3.885294], [3, 20, 3.098391]];
+for (const [d1, d2, crit] of F_CRIT) {
+  eq(`fPValue(${crit}, ${d1}, ${d2}) = 0.05`, fPValue(crit, d1, d2), 0.05, 1e-4);
+}
+
+/* ---- chi-square test of independence ---- */
+console.log('\nchi-square');
+
+const cs = chiSquareTest([[10, 20], [30, 40]]);
+// rowSum [30,70] colSum [40,60] n 100 -> expected [12,18],[28,42]
+// chi2 = 4/12 + 4/18 + 4/28 + 4/42
+eq('chi2 of a 2x2 table', cs.chi2, 4 / 12 + 4 / 18 + 4 / 28 + 4 / 42, 1e-10);
+eq('chi2 df', cs.df, 1);
+eq("Cramer's V", cs.cramersV, Math.sqrt(cs.chi2 / 100), 1e-10);
+eq('smallest expected count', cs.minExpected, 12, 1e-9);
+eq('chi2 p matches the tail function', cs.p, chi2PValue(cs.chi2, 1), 1e-12);
+eq('3x2 table df', chiSquareTest([[1, 2], [3, 4], [5, 6]]).df, 2);
+eq('degenerate 1-column table -> null', chiSquareTest([[1], [2]]), null);
+
+/* ---- Welch t-test (algebra is checkable by hand) ---- */
+console.log('\nWelch t-test');
+
+const wt = welchTTest([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]);
+// mean 3 vs 6, var 2.5 vs 10, se^2 = 0.5 + 2 = 2.5, t = -3 / sqrt(2.5)
+// df = 6.25 / (0.0625 + 1) = 5.8823529...
+eq('welch t', wt.t, -3 / Math.sqrt(2.5), 1e-12);
+eq('welch df (Satterthwaite)', wt.df, 6.25 / 1.0625, 1e-12);
+eq('welch means', [wt.mean1, wt.mean2], [3, 6]);
+eq('welch n', [wt.n1, wt.n2], [5, 5]);
+// pooled sd = sqrt((4*2.5 + 4*10)/8) = sqrt(6.25) = 2.5 -> d = -3/2.5
+eq('Cohen d', wt.cohensD, -1.2, 1e-12);
+eq('welch p consistent with tPValue', wt.p, tPValue(wt.t, wt.df), 1e-12);
+eq('welch skips nulls', welchTTest([1, null, 3], [2, 4]).n1, 2);
+eq('welch needs 2+ per side', welchTTest([1], [2, 3]), null);
+
+/* ---- one-way ANOVA ---- */
+console.log('\none-way ANOVA');
+
+const an = oneWayAnova([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
+// grand 5; ssBetween = 3*(9+0+9) = 54; ssWithin = 3*2 = 6; F = 27/1
+eq('anova F', an.f, 27, 1e-10);
+eq('anova df', [an.dfBetween, an.dfWithin], [2, 6]);
+eq('anova eta squared', an.etaSquared, 54 / 60, 1e-12);
+eq('anova p consistent with fPValue', an.p, fPValue(27, 2, 6), 1e-12);
+eq('anova needs 2+ groups', oneWayAnova([[1, 2, 3]]), null);
+
+/* ---- missingness matrix ---- */
+console.log('\nmissingness matrix');
+
+const holey = new DataFrame(['a', 'b', 'c'], {
+  a: [1, 2, 3, 4],
+  b: [null, 2, 3, 4],
+  c: [null, null, 3, 4],
+});
+const mm = missingMatrix(holey);
+eq('columns with gaps only, worst first', mm.cols, ['c', 'b']);
+eq('missing rate per column', mm.rates, [0.5, 0.25]);
+eq('grid 1 = missing', mm.grid, [[1, 1], [1, 0], [0, 0], [0, 0]]);
+eq('rows carrying at least one gap', mm.dirtyRows, 2);
+eq('missing cell count', [mm.missingCells, mm.totalCells], [3, 12]);
+eq('fully-populated frame yields no columns', missingMatrix(new DataFrame(['x'], { x: [1, 2] })).cols.length, 0);
+
+const dm = missingMatrix(new DataFrame(['x'], { x: Array.from({ length: 5000 }, (_, i) => i) }), 600);
+eq('row sampling caps the grid', dm.sampled <= 600 && dm.sampled > 0, true);
+eq('row sampling reports the original size', dm.total, 5000);
+
+/* ---- numeric matrix ---- */
+console.log('\nnumeric matrix');
+
+const wide = new DataFrame(['x', 'y'], {
+  x: [1, 2, 3, 4, 5, 6, 7, 8],
+  y: [2, 4, null, 8, 10, 12, 14, 16],
+});
+const nm = numericMatrix(wide, ['x', 'y'], 100);
+eq('drops rows with any null', nm.rows.length, 7);
+eq('keeps original row numbers', nm.indices.includes(2), false);
+eq('values stay aligned', nm.rows[2], [4, 8]);
+eq('down-samples large frames', numericMatrix(wide, ['x'], 3).rows.length, 3);
+
 console.log('\nparse.js');
 
 eq('detectDelimiter comma', detectDelimiter('a,b,c\n1,2,3'), ',');
@@ -135,7 +239,7 @@ eq('JSON missing key -> null', js.data.t[0], null);
 
 /* ---- real sample files ---- */
 console.log('\nsample data');
-for (const file of ['data/sales.csv', 'data/iris.csv', 'data/tips.csv']) {
+for (const file of ['data/sales.csv', 'data/iris.csv', 'data/tips.csv', 'data/titanic.csv']) {
   const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
   const p = matrixToColumns(parseDelimited(text));
   const frame = new DataFrame(p.columns, p.data, { name: file });
@@ -152,6 +256,19 @@ for (const file of ['data/sales.csv', 'data/iris.csv', 'data/tips.csv']) {
   if (file.includes('sales')) {
     eq('sales has 16 columns', frame.ncols, 16);
     eq('sales numeric cols', frame.numericCols.length, 9);
+  }
+  if (file.includes('titanic')) {
+    eq('titanic rows', frame.nrows, 891);
+    // the set is famous for its gaps — age, cabin and deck are all incomplete
+    const tm = missingMatrix(frame);
+    eq('titanic has gappy columns', tm.cols.length > 0, true);
+    eq('titanic worst column is cabin, ~77% missing', Math.round(tm.rates[0] * 100), 77);
+    eq('titanic rows with at least one gap', tm.dirtyRows > 700, true);
+    // sex x survived: 342 female (231 survived), 549 male (109 survived)
+    const ct2 = frame.crosstab('sex', 'survived');
+    eq('titanic crosstab is 2x2', [ct2.rows.length, ct2.cols.length], [2, 2]);
+    eq('titanic chi2 is large and significant', chiSquareTest(ct2.grid).p < 1e-20, true);
+    eq('titanic sex x survived groups', frame.groupby(['sex', 'survived'], []).nrows, 4);
   }
 }
 

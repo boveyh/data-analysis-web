@@ -449,6 +449,282 @@ export function histogram(values, bins = 20) {
   return { edges, counts, centers };
 }
 
+/* ------------------------ inferential statistics -------------------------- */
+/* Implemented from first principles so the workbench keeps its promise of
+ * having no runtime dependency other than ECharts. The distribution tails use
+ * the usual Lanczos log-gamma plus continued-fraction expansion
+ * (Numerical Recipes §6.2 / §6.4); tools/selftest.mjs pins them against
+ * published critical values rather than against themselves.
+ */
+
+const LANCZOS = [
+  676.5203681218851, -1259.1392167224028, 771.32342877765313,
+  -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+  9.9843695780195716e-6, 1.5056327351493116e-7,
+];
+
+const FPMIN = 1e-300;
+const EPS = 1e-14;
+
+export function gammaln(x) {
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - gammaln(1 - x);
+  const z = x - 1;
+  let a = 0.99999999999980993;
+  const w = z + 7.5;
+  for (let i = 0; i < 8; i++) a += LANCZOS[i] / (z + i + 1);
+  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(w) - w + Math.log(a);
+}
+
+/** Regularised upper incomplete gamma Q(a, x) = 1 − P(a, x). */
+function gammaQ(a, x) {
+  if (x <= 0) return 1;
+  if (x < a + 1) {                       // series for P, then complement
+    let ap = a, sum = 1 / a, del = sum;
+    for (let n = 1; n <= 500; n++) {
+      ap += 1; del *= x / ap; sum += del;
+      if (Math.abs(del) < Math.abs(sum) * EPS) break;
+    }
+    return 1 - sum * Math.exp(-x + a * Math.log(x) - gammaln(a));
+  }
+  let b = x + 1 - a, c = 1 / FPMIN, d = 1 / b, h = d;
+  for (let i = 1; i <= 500; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = b + an / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return Math.exp(-x + a * Math.log(x) - gammaln(a)) * h;
+}
+
+function betacf(a, b, x) {
+  const qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1;
+  let d = 1 - (qab * x) / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= 500; m++) {
+    const m2 = 2 * m;
+    let aa = (m * (b - m) * x) / ((qam + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; h *= d * c;
+    aa = (-(a + m) * (qab + m) * x) / ((a + m2) * (qap + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+
+/** Regularised incomplete beta I_x(a, b). */
+export function ibeta(a, b, x) {
+  if (!(x > 0)) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(gammaln(a + b) - gammaln(a) - gammaln(b) + a * Math.log(x) + b * Math.log(1 - x));
+  if (x < (a + 1) / (a + b + 2)) return (bt * betacf(a, b, x)) / a;
+  return 1 - (bt * betacf(b, a, 1 - x)) / b;
+}
+
+/** p-value of a chi-square statistic (upper tail). */
+export function chi2PValue(x, df) {
+  if (!(x > 0) || df <= 0) return 1;
+  return gammaQ(df / 2, x / 2);
+}
+
+/** Two-tailed p-value of a t statistic. */
+export function tPValue(t, df) {
+  if (!Number.isFinite(t) || df <= 0) return 1;
+  return ibeta(df / 2, 0.5, df / (df + t * t));
+}
+
+/** p-value of an F statistic (upper tail). */
+export function fPValue(f, d1, d2) {
+  if (!(f > 0) || d1 <= 0 || d2 <= 0) return 1;
+  return ibeta(d2 / 2, d1 / 2, d2 / (d2 + d1 * f));
+}
+
+/**
+ * Chi-square test of independence on a contingency table (array of rows of
+ * counts) — the test that belongs with `pd.crosstab`.
+ */
+export function chiSquareTest(table) {
+  const rows = table.length;
+  const cols = rows ? table[0].length : 0;
+  if (rows < 2 || cols < 2) return null;
+
+  const rowSum = new Array(rows).fill(0);
+  const colSum = new Array(cols).fill(0);
+  let total = 0;
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const v = Number(table[i][j]) || 0;
+      rowSum[i] += v; colSum[j] += v; total += v;
+    }
+  }
+  if (!total) return null;
+
+  let chi2 = 0, minExpected = Infinity;
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const e = (rowSum[i] * colSum[j]) / total;
+      if (e > 0) {
+        const d = (Number(table[i][j]) || 0) - e;
+        chi2 += (d * d) / e;
+        minExpected = Math.min(minExpected, e);
+      }
+    }
+  }
+  const df = (rows - 1) * (cols - 1);
+  const k = Math.min(rows, cols);
+  return {
+    chi2, df,
+    p: chi2PValue(chi2, df),
+    cramersV: total && k > 1 ? Math.sqrt(chi2 / (total * (k - 1))) : null,
+    minExpected: Number.isFinite(minExpected) ? minExpected : 0,
+    rows, cols, total,
+  };
+}
+
+/**
+ * Welch's t-test — the unequal-variance variant, which is the safe default
+ * when you have not checked the equal-variance assumption.
+ */
+export function welchTTest(a, b) {
+  const clean = (arr) => arr.filter((v) => !isNull(v)).map(toNumber).filter((v) => !Number.isNaN(v));
+  const x = clean(a), y = clean(b);
+  if (x.length < 2 || y.length < 2) return null;
+
+  const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+  const varOf = (arr, m) => arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1);
+
+  const mx = mean(x), my = mean(y);
+  const vx = varOf(x, mx), vy = varOf(y, my);
+  const se2 = vx / x.length + vy / y.length;
+  if (!(se2 > 0)) return null;
+
+  const t = (mx - my) / Math.sqrt(se2);
+  const df = (se2 * se2) / (
+    ((vx / x.length) ** 2) / (x.length - 1) + ((vy / y.length) ** 2) / (y.length - 1)
+  );
+  const pooled = Math.sqrt(
+    ((x.length - 1) * vx + (y.length - 1) * vy) / (x.length + y.length - 2),
+  );
+  return {
+    t, df, p: tPValue(t, df),
+    n1: x.length, n2: y.length,
+    mean1: mx, mean2: my,
+    std1: Math.sqrt(vx), std2: Math.sqrt(vy),
+    diff: mx - my,
+    cohensD: pooled ? (mx - my) / pooled : null,
+  };
+}
+
+/** One-way ANOVA across independent groups. */
+export function oneWayAnova(groups) {
+  const gs = groups
+    .map((g) => g.filter((v) => !isNull(v)).map(toNumber).filter((v) => !Number.isNaN(v)))
+    .filter((g) => g.length);
+  if (gs.length < 2) return null;
+
+  const all = gs.flat();
+  const n = all.length;
+  const d1 = gs.length - 1;
+  const d2 = n - gs.length;
+  if (d2 <= 0) return null;
+
+  const grand = all.reduce((s, v) => s + v, 0) / n;
+  let ssBetween = 0, ssWithin = 0;
+  for (const g of gs) {
+    const m = g.reduce((s, v) => s + v, 0) / g.length;
+    ssBetween += g.length * (m - grand) ** 2;
+    for (const v of g) ssWithin += (v - m) ** 2;
+  }
+  const msWithin = ssWithin / d2;
+  const f = msWithin === 0 ? Infinity : (ssBetween / d1) / msWithin;
+  const ssTotal = ssBetween + ssWithin;
+  return {
+    f, dfBetween: d1, dfWithin: d2,
+    p: msWithin === 0 ? 0 : fPValue(f, d1, d2),
+    etaSquared: ssTotal ? ssBetween / ssTotal : null,
+    k: gs.length, n,
+  };
+}
+
+/* ------------------------- multivariate helpers --------------------------- */
+
+/**
+ * Missingness map in the layout `missingno.matrix()` made popular: columns
+ * ordered worst-first, rows down-sampled to something drawable, 1 = missing.
+ */
+export function missingMatrix(df, maxRows = 600, maxCols = 40) {
+  const na = df.isna();
+  const stats = df.colNames.map((name) => {
+    const col = na[name];
+    let miss = 0;
+    for (let i = 0; i < col.length; i++) if (col[i]) miss++;
+    return { name, missing: miss, rate: col.length ? miss / col.length : 0 };
+  });
+
+  const dirty = stats.filter((s) => s.missing > 0).sort((a, b) => b.rate - a.rate);
+  const cols = dirty.slice(0, maxCols);
+
+  const total = df.nrows;
+  const step = Math.max(1, Math.ceil(total / maxRows));
+  const picked = [];
+  for (let i = 0; i < total && picked.length < maxRows; i += step) picked.push(i);
+
+  let dirtyRows = 0;
+  for (let i = 0; i < total; i++) {
+    for (const s of stats) {
+      if (na[s.name][i]) { dirtyRows++; break; }
+    }
+  }
+
+  return {
+    cols: cols.map((c) => c.name),
+    rates: cols.map((c) => c.rate),
+    grid: picked.map((i) => cols.map((c) => (na[c.name][i] ? 1 : 0))),
+    sampled: picked.length,
+    total,
+    step,
+    missingCells: stats.reduce((s, x) => s + x.missing, 0),
+    totalCells: total * df.ncols,
+    dirtyRows,
+    droppedCols: Math.max(0, dirty.length - cols.length),
+  };
+}
+
+/**
+ * Row-complete numeric matrix for multivariate plots (parallel coordinates,
+ * scatter matrices), down-sampled so a 50k-row frame still draws instantly.
+ * `indices` keeps the original row numbers so a category label can be joined
+ * back on.
+ */
+export function numericMatrix(df, cols, maxRows = 1200) {
+  const step = Math.max(1, Math.ceil(df.nrows / maxRows));
+  const series = cols.map((c) => df.values(c));
+  const rows = [];
+  const indices = [];
+  for (let i = 0; i < df.nrows && rows.length < maxRows; i += step) {
+    const row = new Array(cols.length);
+    let ok = true;
+    for (let j = 0; j < cols.length; j++) {
+      const v = toNumber(series[j][i]);
+      if (Number.isNaN(v)) { ok = false; break; }
+      row[j] = v;
+    }
+    if (ok) { rows.push(row); indices.push(i); }
+  }
+  return { rows, indices, step, total: df.nrows };
+}
+
 /* --------------------------- query parser -------------------------------- */
 /* Supports:  col > 10 and col == "x" or col in ["a","b"]
  *            col.str.contains("ab")  col.isna()  col.notna()  not (...)
