@@ -5,7 +5,10 @@
  * ========================================================================== */
 
 import { t, setLang, getLang, applyStatic } from './i18n.js';
-import { DataFrame, histogram, describeSeries, quantile } from './dataframe.js';
+import {
+  DataFrame, histogram, describeSeries, quantile,
+  chiSquareTest, welchTTest, oneWayAnova, missingMatrix, numericMatrix,
+} from './dataframe.js';
 import { parseText } from './parse.js';
 import * as CH from './charts.js';
 
@@ -113,7 +116,314 @@ const state = {
   codeSteps: [],        // [{label, code}]
   currentCode: '',
   echartsReady: false,
+
+  history: [],          // pipeline snapshots *before* each change
+  future: [],           // undone snapshots, for redo
+  autoFilledFor: null,
+  shareUrl: '',
 };
+
+/* ------------------------------ undo / redo ------------------------------- */
+/* The whole analysis is derived from three lists (cleanOps, filters, queryText),
+ * so undoing is just "keep the previous value of those three". Snapshots stay
+ * tiny even on a 50k-row frame because they only hold the recipe, never data. */
+
+const HISTORY_LIMIT = 60;
+
+function snapshotPipeline(label, params) {
+  return {
+    label,
+    params: params || null,
+    cleanOps: state.cleanOps.map((o) => ({ ...o })),
+    filters: state.filters.map((f) => ({ ...f })),
+    queryText: state.queryText,
+  };
+}
+
+function restorePipeline(snap) {
+  state.cleanOps = snap.cleanOps.map((o) => ({ ...o }));
+  state.filters = snap.filters.map((f) => ({ ...f }));
+  state.queryText = snap.queryText || '';
+  $('#queryInput').value = state.queryText;
+  state.page = 1;
+  rebuild();
+  renderAfterFilter();
+  renderHistory();
+}
+
+/** Record the pipeline as it stands now — call BEFORE mutating it. */
+function commit(label, params) {
+  pushSnapshot(snapshotPipeline(label, params));
+}
+
+function pushSnapshot(snap) {
+  state.history.push(snap);
+  if (state.history.length > HISTORY_LIMIT) state.history.shift();
+  state.future.length = 0;
+  renderHistory();
+}
+
+function undo() {
+  if (!state.history.length) return false;
+  const prev = state.history.pop();
+  state.future.push(snapshotPipeline(prev.label, prev.params));
+  restorePipeline(prev);
+  syncUrl();
+  toast(t('hist.undone', { what: t(prev.label, prev.params || {}) }), 'info');
+  return true;
+}
+
+function redo() {
+  if (!state.future.length) return false;
+  const next = state.future.pop();
+  state.history.push(snapshotPipeline(next.label, next.params));
+  restorePipeline(next);
+  syncUrl();
+  toast(t('hist.redone', { what: t(next.label, next.params || {}) }), 'info');
+  return true;
+}
+
+/** Human-readable name for each cleaning op, reused by the pipeline list. */
+function cleanOpLabel(op) {
+  switch (op.kind) {
+    case 'dropna': return { key: 'hist.dropna', params: { cols: op.subset.length ? op.subset.join(', ') : '—' } };
+    case 'fillna': return { key: 'hist.fillna', params: { col: op.col, value: op.value } };
+    case 'astype': return { key: 'hist.astype', params: { col: op.col, type: op.type } };
+    case 'dropdup': return { key: 'hist.dropdup', params: { cols: op.subset.length ? op.subset.join(', ') : '—' } };
+    case 'dropcol': return { key: 'hist.dropcol', params: { cols: op.cols.join(', ') } };
+    case 'rename': return { key: 'hist.rename', params: { col: op.col, name: op.value } };
+    default: return { key: 'hist.step', params: {} };
+  }
+}
+
+/** The current recipe, as an ordered list a reader can follow top to bottom. */
+function pipelineSteps() {
+  const steps = [{ key: 'hist.load', params: { name: state.rawName } }];
+  for (const op of state.cleanOps) steps.push(cleanOpLabel(op));
+  for (const f of state.filters) {
+    steps.push({ key: 'hist.stepFilter', params: { col: f.col, op: OPTEXT[f.op] || f.op, value: f.value } });
+  }
+  if (state.queryText.trim()) steps.push({ key: 'hist.stepQuery', params: { q: state.queryText } });
+  return steps;
+}
+
+function renderHistory() {
+  const host = $('#historyList');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const steps = pipelineSteps();
+  steps.forEach((s, i) => {
+    const li = el('li', { class: `hist-item${i === steps.length - 1 ? ' is-current' : ''}` });
+    li.appendChild(el('span', { class: 'hist-n', text: String(i + 1) }));
+    li.appendChild(el('span', { class: 'hist-text', text: t(s.key, s.params) }));
+    if (i > 0) {
+      const back = el('button', { class: 'hist-back', type: 'button', title: t('hist.rewindTo') });
+      back.textContent = '↺';
+      back.addEventListener('click', () => rewindTo(i));
+      li.appendChild(back);
+    }
+    host.appendChild(li);
+  });
+
+  const u = $('#btnUndo');
+  const r = $('#btnRedo');
+  if (u) { u.disabled = !state.history.length; u.title = t('hist.undoTip', { n: state.history.length }); }
+  if (r) { r.disabled = !state.future.length; r.title = t('hist.redoTip', { n: state.future.length }); }
+  const badge = $('#histCount');
+  if (badge) {
+    badge.hidden = steps.length <= 1;
+    badge.textContent = t('hist.steps', { n: steps.length - 1 });
+  }
+}
+
+/**
+ * Jump straight back to the pipeline as it looked after step `n` by replaying
+ * the recipe prefix. Every step is a pure function of its predecessors, so
+ * truncating the lists is enough — no need to unwind anything.
+ */
+function rewindTo(n) {
+  const keep = Math.max(0, n - 1);                       // everything after "load"
+  const nClean = Math.min(state.cleanOps.length, keep);
+  const nFilter = Math.min(state.filters.length, keep - nClean);
+  const keepQuery = keep - nClean - nFilter > 0;
+
+  commit('hist.rewind', { n });
+  state.cleanOps = state.cleanOps.slice(0, nClean);
+  state.filters = state.filters.slice(0, nFilter);
+  state.queryText = keepQuery ? state.queryText : '';
+  $('#queryInput').value = state.queryText;
+  rebuild();
+  renderAfterFilter();
+  pushCode('filter', t('hist.rewindCode', { n }));
+  syncUrl();
+}
+
+/* --------------------------- shareable URL state -------------------------- */
+/* The link carries the recipe, never the rows — a shared URL can describe
+ * "titanic, not-survived males over 30" without shipping anyone's data. */
+
+function encodePayload(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj));
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodePayload(str) {
+  const s = str.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(s + '='.repeat((4 - (s.length % 4)) % 4));
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function currentPayload() {
+  return {
+    v: 1,
+    s: state.source || null,
+    c: state.cleanOps,
+    f: state.filters,
+    q: state.queryText,
+    t: state.chartType,
+    x: $('#chX') ? $('#chX').value : '',
+    y: $('#chY') ? $('#chY').value : '',
+    g: $('#chSeries') ? $('#chSeries').value : '',
+    a: $('#chAgg') ? $('#chAgg').value : '',
+    o: $('#chSort') ? $('#chSort').value : '',
+    k: $('#chTop') ? $('#chTop').value : '',
+    b: $('#chBins') ? $('#chBins').value : '',
+    m: $('#chNumCols') ? [...$('#chNumCols').selectedOptions].map((o) => o.value) : [],
+    tab: state.activeTab,
+    lang: getLang(),
+  };
+}
+
+/** Mirror the current view into the address bar (replace, so Back still works). */
+function syncUrl() {
+  if (!state.raw) return;
+  try {
+    const hash = `#s=${encodePayload(currentPayload())}`;
+    if (location.hash !== hash) window.history.replaceState(null, '', hash);
+    state.shareUrl = location.href;
+  } catch { /* a URL we cannot encode is not worth breaking the app over */ }
+}
+
+function payloadFromUrl() {
+  const m = /[#&]s=([^&]+)/.exec(location.hash || '');
+  if (!m) return null;
+  try {
+    const p = decodePayload(m[1]);
+    return p && p.v === 1 ? p : null;
+  } catch { return null; }
+}
+
+/* ----------------------------- chart → filter ----------------------------- */
+/* Clicking a mark builds the same filter the user could have typed by hand,
+ * which keeps the generated pandas honest. */
+
+const DRILLABLE = ['bar', 'grouped', 'line', 'area', 'pie', 'box', 'hist', 'missing'];
+
+function addChartFilter(params) {
+  const df = state.view;
+  if (!df) return false;
+  const type = state.chartType;
+  const xCol = $('#chX') ? $('#chX').value : '';
+  const sCol = $('#chSeries') ? $('#chSeries').value : '';
+  const model = state.chartModel || {};
+  const added = [];
+
+  if (type === 'missing') {
+    const col = model.cols ? model.cols[params.value && params.value[0]] : null;
+    if (!col) return false;
+    added.push({ col, op: 'isna', value: '' });
+  } else if (type === 'hist') {
+    const i = params.dataIndex;
+    if (!model.edges || model.edges[i] === undefined || model.edges[i + 1] === undefined) return false;
+    added.push({ col: model.col, op: '>=', value: String(model.edges[i]) });
+    added.push({ col: model.col, op: '<', value: String(model.edges[i + 1]) });
+  } else {
+    if (!xCol || !df.has(xCol) || params.name === undefined || params.name === null) return false;
+    added.push({ col: xCol, op: '==', value: String(params.name) });
+    if (sCol && params.seriesName && df.has(sCol)) {
+      const sVal = String(params.seriesName);
+      if (df.unique(sCol).slice(0, 60).some((v) => String(v) === sVal)) {
+        added.push({ col: sCol, op: '==', value: sVal });
+      }
+    }
+  }
+
+  commit('hist.clickFilter', { col: added[0].col });
+  for (const f of added) state.filters.push(f);
+  rebuild();
+  pushCode('filter', added.map(filterCode).join('\n'));
+  renderAfterFilter();
+  const n = state.view.nrows.toLocaleString();
+  toast(t('filter.drilled', { n }), 'ok');
+  syncUrl();
+  return true;
+}
+
+function wireChartClick() {
+  const type = state.chartType;
+  if (!DRILLABLE.includes(type)) {
+    CH.bindChartClick($('#mainChart'), null);
+    return;
+  }
+  CH.bindChartClick($('#mainChart'), (p) => { addChartFilter(p); });
+}
+
+/* --------------------------- parsing off-thread --------------------------- */
+/* A 50 MB CSV takes seconds to tokenise; doing it on the main thread freezes
+ * the UI. The worker is optional — if it cannot start (file://, old browser)
+ * we quietly fall back to the synchronous path. */
+
+let parseWorker = null;
+let parseSeq = 0;
+const pendingParses = new Map();
+
+function ensureParseWorker() {
+  if (parseWorker !== null) return parseWorker;
+  try {
+    const w = new Worker(new URL('./parse.worker.js', import.meta.url), { type: 'module' });
+    w.onmessage = (e) => {
+      const { id, ok, columns, data, error } = e.data || {};
+      const slot = pendingParses.get(id);
+      if (!slot) return;
+      pendingParses.delete(id);
+      if (ok) slot.resolve({ columns, data });
+      else slot.reject(new Error(error || 'parse-failed'));
+    };
+    w.onerror = () => {
+      for (const [, slot] of pendingParses) slot.reject(new Error('worker-failed'));
+      pendingParses.clear();
+      try { w.terminate(); } catch { /* already gone */ }
+      parseWorker = false;
+      // a worker that fails once should not be retried on every load
+    };
+    parseWorker = w;
+  } catch {
+    parseWorker = false;
+  }
+  return parseWorker;
+}
+
+async function parseAsync(text, name) {
+  const w = ensureParseWorker();
+  if (w) {
+    try {
+      const id = ++parseSeq;
+      return await new Promise((resolve, reject) => {
+        pendingParses.set(id, { resolve, reject });
+        w.postMessage({ id, text, name });
+      });
+    } catch {
+      /* Worker unavailable (file:// origin, CSP, crash). Re-running the parser
+       * on the main thread keeps the feature working — just without the
+       * concurrency win. Genuine parse errors resurface identically below. */
+    }
+  }
+  return parseText(text, name);
+}
 
 /* --------------------------- data ingestion ------------------------------- */
 
@@ -123,6 +433,7 @@ function setDataFrame(columns, data, name, sourceId) {
   state.source = sourceId || null;
   resetPipeline(false);
   refreshAll();
+  syncUrl();
 }
 
 function resetPipeline(rerender = true) {
@@ -138,8 +449,11 @@ function resetPipeline(rerender = true) {
   state.hiddenCols = new Set();
   state.codeSteps = [];
   state.currentCode = '';
+  state.history = [];
+  state.future = [];
   rebuild();
   pushCode('load', loadCode());
+  renderHistory();
   if (rerender) refreshAll();
 }
 
@@ -151,7 +465,7 @@ async function loadSample(id) {
     const res = await fetch(def.file, { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-    const parsed = parseText(text, def.file);
+    const parsed = await parseAsync(text, def.file);
     if (!parsed || !parsed.columns.length) throw new Error('empty');
     setDataFrame(parsed.columns, parsed.data, def.file.split('/').pop(), id);
     toast(t('load.done', { name: def.file.split('/').pop(), rows: state.raw.nrows, cols: state.raw.ncols }), 'ok');
@@ -162,8 +476,14 @@ async function loadSample(id) {
   }
 }
 
-function loadText(text, name) {
-  const parsed = parseText(text, name);
+async function loadText(text, name) {
+  let parsed;
+  try {
+    parsed = await parseAsync(text, name);
+  } catch {
+    toast(t('load.empty'), 'err');
+    return false;
+  }
   if (!parsed || !parsed.columns.length || !parsed.columns.some((c) => parsed.data[c].length)) {
     toast(t('load.empty'), 'err');
     return false;
@@ -176,8 +496,8 @@ function loadText(text, name) {
 function readFile(file) {
   showLoading(t('load.file'));
   const reader = new FileReader();
-  reader.onload = () => {
-    try { loadText(String(reader.result), file.name); }
+  reader.onload = async () => {
+    try { await loadText(String(reader.result), file.name); }
     catch { toast(t('paste.failed'), 'err'); }
     finally { hideLoading(); }
   };
@@ -362,6 +682,16 @@ function highlight(src) {
 
 /* ------------------------------ rendering -------------------------------- */
 
+/**
+ * The filter builder and the history list are two views of the same state
+ * (`filters` + `queryText`), so they must always be repainted together — a
+ * handler that refreshes one and not the other leaves a stale panel behind.
+ */
+function renderPipelinePanels() {
+  renderFilterPanel();
+  renderHistory();
+}
+
 function refreshAll() {
   renderKPIs();
   renderSamples();
@@ -369,7 +699,9 @@ function refreshAll() {
   renderColumnControls();
   renderTable();
   renderStats();
-  renderFilterPanel();
+  renderMissingChart();
+  renderTests();
+  renderPipelinePanels();
   renderGroupby();
   // a brand-new dataset deserves fresh, sensible chart defaults
   if (state.autoFilledFor !== state.raw) {
@@ -422,6 +754,7 @@ function renderSamples() {
     const btn = el('button', {
       class: `sample-item${state.source === s.id ? ' is-active' : ''}`,
       type: 'button',
+      'data-id': s.id,
       title: `${name} — ${size}\n${desc}`,
     });
 
@@ -524,6 +857,16 @@ function renderColumnControls() {
   }
   if ([...agg.options].some((o) => o.value === aggPrev)) agg.value = aggPrev;
 
+  // multi-column numeric picker used by parallel coordinates / SPLOM
+  const numSel = $('#chNumCols');
+  if (numSel) {
+    const nPrev = [...numSel.selectedOptions].map((o) => o.value);
+    numSel.innerHTML = '';
+    for (const c of numCols) numSel.appendChild(el('option', { value: c, text: c }));
+    const keep = nPrev.filter((c) => numCols.includes(c));
+    if (keep.length) [...numSel.options].forEach((o) => { o.selected = keep.includes(o.value); });
+  }
+
   const gbCol = $('#gbCol');
   fillMulti(gbCol, numCols.length ? numCols : cols);
 
@@ -608,6 +951,13 @@ function cellHtml(col, value) {
   return esc(value);
 }
 
+/* Row height is fixed in virtual mode so the scroll offset maps to an index
+   without measuring anything. */
+const ROW_H = 30;
+const VIRTUAL_OVERSCAN = 6;
+
+let virtualView = null;
+
 function renderTable() {
   const host = $('#tableScroll');
   const df = state.view;
@@ -616,52 +966,116 @@ function renderTable() {
   const types = new Map(df.columns.map((c) => [c.name, c.type]));
   const { rows, total } = currentRows();
 
-  const maxPage = Math.max(1, Math.ceil(total / state.pageSize));
+  const virtual = state.pageSize === 'virtual';
+  const pageSize = virtual ? Math.max(total, 1) : Number(state.pageSize);
+  const maxPage = Math.max(1, Math.ceil(total / pageSize));
   if (state.page > maxPage) state.page = maxPage;
-  const from = (state.page - 1) * state.pageSize;
-  const slice = rows.slice(from, from + state.pageSize);
+  const from = (state.page - 1) * pageSize;
+  const slice = rows.slice(from, from + pageSize);
 
   $('#tableInfo').textContent = t('table.info', {
-    from: total ? from + 1 : 0, to: Math.min(from + state.pageSize, total), total: total.toLocaleString(),
+    from: total ? from + 1 : 0, to: Math.min(from + pageSize, total), total: total.toLocaleString(),
   });
 
-  const head = ['<th class="td-idx">' + t('table.index') + '</th>']
+  const head = ['<th class="td-idx" scope="col">' + t('table.index') + '</th>']
     .concat(cols.map((c) => {
       const sorted = state.sort.col === c;
       const arrow = sorted ? (state.sort.asc ? '▲' : '▼') : '↕';
-      return `<th class="sortable${sorted ? ' is-sorted' : ''}${types.get(c) === 'number' ? ' num' : ''}" data-col="${esc(c)}">
-        <span class="th-inner">${esc(c)}<span class="arrow">${arrow}</span></span></th>`;
+      const ariaSort = sorted ? (state.sort.asc ? 'ascending' : 'descending') : 'none';
+      return `<th scope="col" tabindex="0" aria-sort="${ariaSort}" class="sortable${sorted ? ' is-sorted' : ''}${types.get(c) === 'number' ? ' num' : ''}" data-col="${esc(c)}">
+        <span class="th-inner">${esc(c)}<span class="arrow" aria-hidden="true">${arrow}</span></span></th>`;
     })).join('');
 
-  const body = slice.length
-    ? slice.map((i) => {
-        const tds = cols.map((c) => {
-          const type = types.get(c);
-          const cls = type === 'number' ? ' class="num"' : '';
-          return `<td${cls}>${cellHtml({ type }, df.values(c)[i])}</td>`;
-        }).join('');
-        return `<tr><td class="td-idx">${i + 1}</td>${tds}</tr>`;
-      }).join('')
-    : `<tr><td colspan="${cols.length + 1}" style="text-align:center;padding:26px;color:var(--text-3)">${t('table.nohit')}</td></tr>`;
+  host.classList.toggle('is-virtual', virtual);
 
-  host.innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const rowHtml = (i) => {
+    const tds = cols.map((c) => {
+      const type = types.get(c);
+      const cls = type === 'number' ? ' class="num"' : '';
+      return `<td${cls}>${cellHtml({ type }, df.values(c)[i])}</td>`;
+    }).join('');
+    return `<tr><td class="td-idx">${i + 1}</td>${tds}</tr>`;
+  };
+
+  if (virtual) {
+    host.innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody></tbody></table>`;
+    virtualView = { slice, cols, types, from, rowHtml, body: host.querySelector('tbody') };
+    paintVirtual();
+  } else {
+    virtualView = null;
+    const body = slice.length
+      ? slice.map(rowHtml).join('')
+      : `<tr><td colspan="${cols.length + 1}" style="text-align:center;padding:26px;color:var(--text-3)">${t('table.nohit')}</td></tr>`;
+    host.innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  }
 
   host.querySelectorAll('th.sortable').forEach((th) => {
-    th.addEventListener('click', () => {
+    const toggle = () => {
       const col = th.dataset.col;
       if (state.sort.col === col) state.sort.asc = !state.sort.asc;
       else state.sort = { col, asc: false };
       renderTable();
+      const again = host.querySelector(`th.sortable[data-col="${CSS.escape(col)}"]`);
+      if (again) again.focus();
+    };
+    th.addEventListener('click', toggle);
+    th.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     });
   });
 
-  renderPager(maxPage, total);
+  renderPager(maxPage, total, virtual);
 }
 
-function renderPager(maxPage, total) {
+/**
+ * Draw only the rows the viewport can see, bookended by two spacer rows that
+ * hold the scrollbar honest. 50k rows cost the same DOM as 40.
+ *
+ * The viewport height cannot come from `clientHeight` here: immediately after
+ * `innerHTML` is replaced the container has collapsed to the height of its
+ * header, so measuring would paint a handful of rows and leave a blank gap
+ * until the user scrolled. The container's own `max-height` is the stable
+ * number — it is what the box will settle at once the rows exist.
+ */
+function viewportHeight(host) {
+  const max = parseFloat(getComputedStyle(host).maxHeight);
+  if (Number.isFinite(max) && max > 0) return max;
+  return host.clientHeight || 520;
+}
+
+function paintVirtual() {
+  const v = virtualView;
+  if (!v) return;
+  const host = $('#tableScroll');
+  const viewH = viewportHeight(host);
+  const n = v.slice.length;
+  const first = Math.max(0, Math.floor(host.scrollTop / ROW_H) - VIRTUAL_OVERSCAN);
+  const last = Math.min(n, first + Math.ceil(viewH / ROW_H) + VIRTUAL_OVERSCAN * 2);
+  const span = v.cols.length + 1;
+  const above = first * ROW_H;
+  const below = Math.max(0, (n - last) * ROW_H);
+
+  v.body.innerHTML =
+    `<tr class="v-spacer" aria-hidden="true" style="height:${above}px"><td colspan="${span}"></td></tr>` +
+    (n ? v.slice.slice(first, last).map(v.rowHtml).join('')
+       : `<tr><td colspan="${span}" style="text-align:center;padding:26px;color:var(--text-3)">${t('table.nohit')}</td></tr>`) +
+    `<tr class="v-spacer" aria-hidden="true" style="height:${below}px"><td colspan="${span}"></td></tr>`;
+}
+
+let virtualRaf = 0;
+function onVirtualScroll() {
+  if (!virtualView || virtualRaf) return;
+  virtualRaf = requestAnimationFrame(() => { virtualRaf = 0; paintVirtual(); });
+}
+
+function renderPager(maxPage, total, virtual = false) {
   const host = $('#pager');
   host.innerHTML = '';
   if (!state.view) return;
+  if (virtual) {
+    host.appendChild(el('span', { class: 'pg-info', text: t('table.virtualInfo', { n: total.toLocaleString() }) }));
+    return;
+  }
   const mk = (label, page, opts = {}) => {
     const b = el('button', { type: 'button', text: label });
     if (opts.on) b.classList.add('is-on');
@@ -767,6 +1181,164 @@ function renderValueCounts() {
   }));
 }
 
+/* --------------------- missingness matrix + tests ------------------------ */
+
+function missingChartLabels() {
+  return {
+    rows: t('miss.rowsAxis'),
+    row: t('miss.row'),
+    present: t('miss.present'),
+    missing: t('miss.missing'),
+    isMissing: t('miss.isMissing'),
+  };
+}
+
+function renderMissingChart() {
+  const host = $('#missChart');
+  const df = state.view;
+  if (!host || !df || !state.echartsReady) return;
+  const matrix = missingMatrix(df, 180, 20);
+  if (!matrix.cols.length) {
+    CH.clearChart(host);
+    host.innerHTML = `<p class="muted-note" style="padding:16px">${esc(t('stats.noMissing'))}</p>`;
+    return;
+  }
+  CH.clearChart(host);
+  CH.renderChart(host, CH.missingnessOption({
+    matrix,
+    labels: missingChartLabels(),
+    sampledNote: matrix.step > 1 ? ` (1/${matrix.step})` : '',
+  }, CH.chartTheme()));
+}
+
+/** p-values are only interesting for a few digits, then they are just "tiny". */
+function fmtP(p) {
+  if (p === null || p === undefined || Number.isNaN(p)) return '—';
+  if (p < 1e-4) return p.toExponential(2);
+  return p.toFixed(4);
+}
+
+function renderTests() {
+  const df = state.view;
+  const host = $('#testTable');
+  if (!host || !df) return;
+
+  const gSel = $('#testGroup');
+  const vSel = $('#testValue');
+
+  /* repopulate only when the frame's columns actually changed */
+  const sig = `${df.ncols}|${df.colNames.join('\u0001')}`;
+  if (gSel.dataset.sig !== sig) {
+    gSel.dataset.sig = sig;
+    const prevG = gSel.value, prevV = vSel.value;
+    gSel.innerHTML = ''; vSel.innerHTML = '';
+    for (const c of df.categoricalCols.filter((c) => df.nunique(c) >= 2 && df.nunique(c) <= 30)) {
+      gSel.appendChild(el('option', { value: c, text: c }));
+    }
+    for (const c of df.numericCols) vSel.appendChild(el('option', { value: c, text: c }));
+    const preferG = pickCategorical(df);
+    if ([...gSel.options].some((o) => o.value === preferG)) gSel.value = preferG;
+    else if ([...gSel.options].some((o) => o.value === prevG)) gSel.value = prevG;
+    const ranked = rankedNumeric(df);
+    if ([...vSel.options].some((o) => o.value === ranked[0])) vSel.value = ranked[0];
+    else if ([...vSel.options].some((o) => o.value === prevV)) vSel.value = prevV;
+  }
+
+  const gCol = gSel.value;
+  const vCol = vSel.value;
+
+  if (!gCol || !vCol || !df.has(gCol) || !df.has(vCol)) {
+    host.innerHTML = `<p class="muted-note" style="padding:16px">${esc(t('test.needCols'))}</p>`;
+    return;
+  }
+
+  const gv = df.values(gCol);
+  const vv = df.values(vCol);
+  const levels = df.unique(gCol).slice(0, 30).map(String);
+  const buckets = new Map(levels.map((l) => [l, []]));
+  for (let i = 0; i < df.nrows; i++) {
+    const k = String(gv[i]);
+    if (buckets.has(k)) buckets.get(k).push(vv[i]);
+  }
+  const groups = [...buckets.values()].filter((g) => g.length >= 2);
+
+  const found = [];
+
+  /* two groups -> Welch t-test; three or more -> one-way ANOVA */
+  if (levels.length === 2 && groups.length === 2) {
+    const r = welchTTest(buckets.get(levels[0]), buckets.get(levels[1]));
+    if (r) found.push({
+      key: 'test.welchT', params: { a: levels[0], b: levels[1] },
+      stat: r.t, df: r.df, p: r.p,
+      effect: r.cohensD, effectName: "Cohen's d",
+      scipy: `stats.ttest_ind(${py(vCol)}[g == ${py(levels[0])}], ${py(vCol)}[g == ${py(levels[1])}], equal_var=False)`,
+    });
+  }
+  if (levels.length >= 2 && levels.length <= 30 && groups.length >= 2) {
+    const r = oneWayAnova(groups);
+    if (r) found.push({
+      key: 'test.anova', params: { k: r.k },
+      stat: r.f, df: `${r.dfBetween}, ${r.dfWithin}`, p: r.p,
+      effect: r.etaSquared, effectName: 'η²',
+      scipy: `stats.f_oneway(${levels.slice(0, 3).map((l) => `g[${py(l)}]`).join(', ')}${levels.length > 3 ? ', …' : ''})`,
+    });
+  }
+
+  /* chi-square needs a second categorical column with a sane cardinality */
+  const other = df.categoricalCols
+    .filter((c) => c !== gCol && df.nunique(c) >= 2 && df.nunique(c) <= 12)
+    .sort((a, b) => Math.abs(df.nunique(a) - 3) - Math.abs(df.nunique(b) - 3))[0];
+  let chiInfo = null;
+  if (other) {
+    const ct = df.crosstab(gCol, other);
+    if (ct.rows.length >= 2 && ct.cols.length >= 2) {
+      const r = chiSquareTest(ct.grid);
+      if (r) {
+        found.push({
+          key: 'test.chi2', params: { a: gCol, b: other },
+          stat: r.chi2, df: r.df, p: r.p,
+          effect: r.cramersV, effectName: "Cramér's V",
+          warn: r.minExpected < 5 ? t('test.lowExpected', { n: r.minExpected.toFixed(1) }) : '',
+          scipy: `stats.chi2_contingency(pd.crosstab(df[${py(gCol)}], df[${py(other)}]))`,
+        });
+        chiInfo = { a: gCol, b: other, r };
+      }
+    }
+  }
+
+  if (!found.length) {
+    host.innerHTML = `<p class="muted-note" style="padding:16px">${esc(t('test.noTest'))}</p>`;
+    return;
+  }
+
+  const head = `<tr>
+    <th>${esc(t('test.name'))}</th>
+    <th class="num">${esc(t('test.stat'))}</th>
+    <th class="num">${esc(t('test.df'))}</th>
+    <th class="num">p</th>
+    <th class="num">${esc(t('test.effect'))}</th>
+    <th>${esc(t('test.verdict'))}</th>
+  </tr>`;
+
+  const body = found.map((r) => {
+    const sig = r.p < 0.05;
+    return `<tr>
+      <td title="${esc(r.scipy)}">${esc(t(r.key, r.params))}</td>
+      <td class="num">${CH.fmtNum(r.stat, 3)}</td>
+      <td class="num">${typeof r.df === 'number' ? r.df.toFixed(1) : r.df}</td>
+      <td class="num">${fmtP(r.p)}</td>
+      <td class="num">${CH.fmtNum(r.effect, 3)} <span class="muted-note">${esc(r.effectName)}</span></td>
+      <td><span class="verdict ${sig ? 'is-sig' : 'is-ns'}">${esc(t(sig ? 'test.significant' : 'test.notSignificant'))}</span>${
+        r.warn ? `<span class="test-warn" title="${esc(r.warn)}">!</span>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  host.innerHTML = `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>
+    <p class="muted-note test-note">${esc(t('test.note', { p: '0.05' }))}</p>`;
+
+  state.testSummary = { gCol, vCol, chiInfo, found };
+}
+
 /* ------------------------------- filters --------------------------------- */
 
 function renderFilterPanel() {
@@ -786,7 +1358,7 @@ function renderFilterPanel() {
     const colSel = el('select', { class: 'select' });
     for (const c of df.colNames) colSel.appendChild(el('option', { value: c, text: c }));
     colSel.value = f.col;
-    colSel.addEventListener('change', () => { f.col = colSel.value; rebuild(); renderAfterFilter(); });
+    colSel.addEventListener('change', () => { commit('hist.filterEdit', { col: f.col }); f.col = colSel.value; rebuild(); renderAfterFilter(); syncUrl(); });
 
     const type = df.type(f.col);
     const ops = type === 'number'
@@ -796,20 +1368,30 @@ function renderFilterPanel() {
     for (const o of ops) opSel.appendChild(el('option', { value: o, text: OPTEXT[o] || o }));
     opSel.value = ops.includes(f.op) ? f.op : ops[0];
     f.op = opSel.value;
-    opSel.addEventListener('change', () => { f.op = opSel.value; rebuild(); renderAfterFilter(); });
+    opSel.addEventListener('change', () => { commit('hist.filterEdit', { col: f.col }); f.op = opSel.value; rebuild(); renderAfterFilter(); syncUrl(); });
 
     const valInput = el('input', { class: 'input', value: f.value });
     valInput.placeholder = t('filter.value');
     valInput.disabled = ['isna', 'notna'].includes(f.op);
     valInput.addEventListener('input', () => { f.value = valInput.value; rebuild(); renderAfterFilter(); });
+    /* typing re-filters live, but only one undo step is kept for the whole edit:
+       the "before" state is captured on focus and committed on blur. */
+    let beforeEdit = null;
+    valInput.addEventListener('focus', () => { beforeEdit = snapshotPipeline('hist.filterEdit', { col: f.col }); });
+    valInput.addEventListener('change', () => {
+      if (beforeEdit) { pushSnapshot(beforeEdit); beforeEdit = null; }
+      syncUrl();
+    });
 
     const rm = el('button', { class: 'rm', type: 'button', title: t('filter.clear') });
     rm.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     rm.addEventListener('click', () => {
+      commit('hist.filterRemove', { col: f.col });
       state.filters.splice(idx, 1);
       rebuild();
-      pushCode('filter', '# 已移除一个筛选条件');
+      pushCode('filter', t('code.removedFilter'));
       renderAfterFilter();
+      syncUrl();
     });
 
     row.append(colSel, opSel, valInput, rm);
@@ -833,17 +1415,21 @@ function renderAfterFilter() {
   renderKPIs();
   renderTable();
   renderStats();
+  renderMissingChart();
+  renderTests();
   renderValueCounts();
   renderCharts();
   renderCode();
-  renderFilterPanel();
+  renderPipelinePanels();
 }
 
 /** pandas-style string literal for source code (single-quoted, escaped). */
 const pyStr = (s) => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
 function runQuery() {
-  state.queryText = $('#queryInput').value;
+  const next = $('#queryInput').value;
+  if (next !== state.queryText) commit('hist.query', { q: next });
+  state.queryText = next;
   rebuild();
   const msg = $('#queryMsg');
   if (state.queryError) {
@@ -862,6 +1448,7 @@ function runQuery() {
   }
   renderAfterFilter();
   renderCode();
+  syncUrl();
 }
 
 /* ------------------------------- groupby --------------------------------- */
@@ -929,6 +1516,7 @@ function runGroupby(demo = false) {
 const CHART_TYPES = [
   ['bar', 'ct.bar'], ['line', 'ct.line'], ['area', 'ct.area'], ['scatter', 'ct.scatter'],
   ['hist', 'ct.hist'], ['box', 'ct.box'], ['pie', 'ct.pie'], ['heat', 'ct.heat'], ['grouped', 'ct.grouped'],
+  ['missing', 'ct.missing'], ['parallel', 'ct.parallel'], ['splom', 'ct.splom'],
 ];
 
 const CHART_ICONS = {
@@ -941,6 +1529,9 @@ const CHART_ICONS = {
   pie: '<svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 12V4a8 8 0 018 8h-8z" fill="currentColor" opacity=".55"/></svg>',
   heat: '<svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="3" width="6" height="6" rx="1.4" fill="currentColor" opacity=".85"/><rect x="10" y="3" width="6" height="6" rx="1.4" fill="currentColor" opacity=".4"/><rect x="17" y="3" width="4" height="6" rx="1.4" fill="currentColor" opacity=".65"/><rect x="3" y="10" width="6" height="6" rx="1.4" fill="currentColor" opacity=".45"/><rect x="10" y="10" width="6" height="6" rx="1.4" fill="currentColor" opacity=".9"/><rect x="17" y="10" width="4" height="6" rx="1.4" fill="currentColor" opacity=".3"/></svg>',
   grouped: '<svg viewBox="0 0 24 24" width="20" height="20"><rect x="4" y="10" width="6" height="10" rx="1.2" fill="currentColor" opacity=".8"/><rect x="4" y="15" width="6" height="5" rx="1.2" fill="currentColor" opacity=".4"/><rect x="14" y="6" width="6" height="14" rx="1.2" fill="currentColor" opacity=".8"/><rect x="14" y="13" width="6" height="7" rx="1.2" fill="currentColor" opacity=".4"/></svg>',
+  missing: '<svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="4" width="18" height="16" rx="1.6" stroke="currentColor" stroke-width="1.5" fill="none"/><rect x="5.5" y="6.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="10" y="6.5" width="3" height="3" fill="currentColor"/><rect x="14.5" y="6.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="5.5" y="11" width="3" height="3" fill="currentColor"/><rect x="10" y="11" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="14.5" y="11" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="5.5" y="15.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="10" y="15.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="14.5" y="15.5" width="3" height="3" fill="currentColor"/></svg>',
+  parallel: '<svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 4v16M12 4v16M19 4v16" stroke="currentColor" stroke-width="1.4" opacity=".45" stroke-linecap="round"/><path d="M5 8l7 4 7-6M5 14l7-3 7 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  splom: '<svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="3" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><rect x="13" y="3" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><rect x="3" y="13" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><rect x="13" y="13" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="8" r="1" fill="currentColor"/><circle cx="16" cy="5" r="1" fill="currentColor"/><circle cx="19" cy="8" r="1" fill="currentColor"/><circle cx="6" cy="16" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="16" cy="16" r="1" fill="currentColor"/><circle cx="19" cy="19" r="1" fill="currentColor"/></svg>',
 };
 
 function renderChartTypes() {
@@ -952,14 +1543,49 @@ function renderChartTypes() {
     b.addEventListener('click', () => {
       state.chartType = type;
       $$('.chart-type').forEach((x) => x.classList.toggle('is-on', x.dataset.type === type));
-      $('#binsField').hidden = type !== 'hist';
+      syncChartFields();
       autoFillChartConfig();
       renderCharts();
+      syncUrl();
     });
     host.appendChild(b);
   }
   $$('.chart-type').forEach((x) => x.classList.toggle('is-on', x.dataset.type === state.chartType));
-  $('#binsField').hidden = state.chartType !== 'hist';
+  syncChartFields();
+}
+
+/**
+ * Which mapping control each chart type actually reads. Controls are tagged in
+ * the markup with `data-field`, so the panel only ever shows inputs that will
+ * change what you see — a correlation matrix has no axes, parallel coordinates
+ * have no X/Y, and a histogram has no aggregation.
+ */
+const FIELD_FOR = {
+  bar: ['x', 'y', 'series', 'agg', 'sort', 'topN', 'stack', 'label'],
+  line: ['x', 'y', 'series', 'agg', 'sort', 'topN', 'smooth', 'label'],
+  area: ['x', 'y', 'series', 'agg', 'sort', 'topN', 'smooth', 'label'],
+  grouped: ['x', 'y', 'series', 'agg', 'sort', 'topN', 'stack', 'label'],
+  scatter: ['x', 'y', 'series', 'sort', 'topN', 'smooth'],
+  hist: ['x', 'bins', 'series', 'sort', 'topN'],
+  box: ['x', 'y', 'series', 'sort', 'topN'],
+  pie: ['x', 'y', 'agg', 'sort', 'topN'],
+  heat: [],
+  missing: [],
+  parallel: ['numCols', 'series', 'smooth'],
+  splom: ['numCols'],
+};
+
+function syncChartFields() {
+  const type = state.chartType;
+  const on = new Set(FIELD_FOR[type] || FIELD_FOR.bar);
+
+  $$('#chartConfig [data-field]').forEach((node) => {
+    // a wrapper may cover several controls ("xy" holds both the X and Y rows)
+    node.hidden = !node.dataset.field.split(' ').some((tok) => on.has(tok));
+  });
+
+  const hint = $('#chartDrillHint');
+  if (hint) hint.hidden = !DRILLABLE.includes(type);
 }
 
 /* ------------------------- smart column defaults -------------------------- */
@@ -1074,8 +1700,16 @@ function renderCharts() {
   let option = null;
   let aggWord = '';
 
+  /** Render and re-attach the drill-down click handler in one step. */
+  const paint = (opt) => { CH.renderChart(stage, opt); wireChartClick(); };
+
+  state.chartModel = null;
+
+  /* chart types that read a multi-column numeric selection instead of X/Y */
+  const NO_XY = ['heat', 'missing', 'parallel', 'splom'];
+
   /* nothing chosen yet (e.g. right after a dataset swap) — show a friendly hint */
-  if (type !== 'heat' && (!xCol || !df.has(xCol))) {
+  if (!NO_XY.includes(type) && (!xCol || !df.has(xCol))) {
     titleEl.textContent = '—';
     subEl.textContent = '';
     chartPlaceholder(t('chart.none'));
@@ -1094,9 +1728,123 @@ function renderCharts() {
       titleEl.textContent = `corr() · ${corr.cols.length} × ${corr.cols.length}`;
       subEl.textContent = 'df.corr(numeric_only=True)';
       CH.renderChart(stage, opt2);
+      wireChartClick();
       dataHost.innerHTML = '';
       state.currentCode = 'df.corr(numeric_only=True).round(2)';
       pushCode('corr', state.currentCode);
+      return;
+    }
+
+    /* ---------------------- missingness matrix ------------------------ */
+    if (type === 'missing') {
+      const matrix = missingMatrix(df, 260, 30);
+      if (!matrix.cols.length) {
+        titleEl.textContent = '—'; subEl.textContent = '';
+        state.chartModel = null;
+        chartPlaceholder(t('chart.noMissing'));
+        return;
+      }
+      model = {
+        matrix,
+        labels: {
+          rows: t('miss.rowsAxis'),
+          row: t('miss.row'),
+          present: t('miss.present'),
+          missing: t('miss.missing'),
+          isMissing: t('miss.isMissing'),
+        },
+        sampledNote: matrix.step > 1 ? ` (1/${matrix.step})` : '',
+      };
+      state.chartModel = { type: 'missing', cols: matrix.cols };
+
+      titleEl.textContent = t('chart.missingTitle', { n: matrix.cols.length });
+      subEl.textContent = `df.isna().mean().sort_values(ascending=False)`;
+      paint(CH.missingnessOption(model, CH.chartTheme()));
+      state.currentCode = 'df.isna().mean().sort_values(ascending=False).round(4)';
+      pushCode('missing', state.currentCode);
+      sub2(subEl, matrix.sampled);
+
+      dataHost.innerHTML = `<table class="data"><thead><tr><th>${esc(t('stats.column'))}</th>
+        <th class="num">${esc(t('stats.missingCol'))}</th><th class="num">${esc(t('stats.missingPct'))}</th><th></th></tr></thead><tbody>${
+        matrix.cols.map((c, i) => {
+          const pct = matrix.rates[i] * 100;
+          return `<tr><td>${esc(c)}</td><td class="num">${Math.round(matrix.rates[i] * matrix.total).toLocaleString()}</td>
+            <td class="num">${pct.toFixed(1)}%</td>
+            <td style="width:120px"><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div></td></tr>`;
+        }).join('')}</tbody></table>`;
+      return;
+    }
+
+    /* ------------------ multivariate: parallel / SPLOM ----------------- */
+    if (type === 'parallel' || type === 'splom') {
+      const cap = type === 'splom' ? 4 : 8;
+      let chosen = ($('#chNumCols') ? [...$('#chNumCols').selectedOptions].map((o) => o.value) : [])
+        .filter((c) => df.numericCols.includes(c));
+      if (chosen.length < 2) chosen = rankedNumeric(df);
+      chosen = chosen.slice(0, cap);
+
+      if (chosen.length < 2) {
+        titleEl.textContent = '—'; subEl.textContent = '';
+        chartPlaceholder(t('chart.needTwoNumeric'));
+        return;
+      }
+
+      const nm = numericMatrix(df, chosen, type === 'splom' ? 700 : 1200);
+      if (!nm.rows.length) {
+        titleEl.textContent = '—'; subEl.textContent = '';
+        chartPlaceholder(t('chart.needTwoNumeric'));
+        return;
+      }
+
+      if (type === 'parallel') {
+        const dims = chosen.map((c, i) => {
+          let lo = Infinity, hi = -Infinity;
+          for (const r of nm.rows) { if (r[i] < lo) lo = r[i]; if (r[i] > hi) hi = r[i]; }
+          return { name: c, min: lo, max: hi };
+        });
+        const sCol = $('#chSeries').value;
+        const colors = CH.chartTheme().colors;
+        let groups;
+        if (sCol && df.has(sCol)) {
+          const buckets = new Map();
+          for (let k = 0; k < nm.rows.length; k++) {
+            const key = String(df.values(sCol)[nm.indices[k]] ?? '');
+            if (!buckets.has(key)) buckets.set(key, []);
+            buckets.get(key).push(nm.rows[k]);
+          }
+          groups = [...buckets.entries()].slice(0, 10)
+            .map(([name, rows], i) => ({ name, rows, color: colors[i % colors.length] }));
+        } else {
+          groups = [{ name: '', rows: nm.rows, color: colors[0] }];
+        }
+        state.chartModel = { type: 'parallel' };
+        titleEl.textContent = t('chart.parallelTitle', { n: chosen.length });
+        subEl.textContent = `parallel_coordinates(df, ${py(sCol || chosen[0])})`;
+        paint(CH.parallelOption({ dims, groups }, {
+          smooth: $('#chSmooth').checked, opacity: 0.42,
+        }, CH.chartTheme()));
+        sub2(subEl, nm.rows.length);
+        state.currentCode = `from pandas.plotting import parallel_coordinates\n\nparallel_coordinates(df, ${py(sCol || chosen[0])}, cols=${pyList(chosen)})`;
+        pushCode('parallel', state.currentCode);
+        dataHost.innerHTML = '';
+        return;
+      }
+
+      const cells = {};
+      for (let r = 0; r < chosen.length; r++) {
+        for (let c = 0; c < chosen.length; c++) {
+          if (r === c) continue;
+          cells[`${r},${c}`] = nm.rows.map((row) => [row[c], row[r]]);
+        }
+      }
+      state.chartModel = { type: 'splom' };
+      titleEl.textContent = t('chart.splomTitle', { n: chosen.length });
+      subEl.textContent = `px.scatter_matrix(df, dimensions=${pyList(chosen)})`;
+      paint(CH.splomOption({ variables: chosen, cells }, CH.chartTheme()));
+      sub2(subEl, nm.rows.length);
+      state.currentCode = `import plotly.express as px\n\npx.scatter_matrix(df, dimensions=${pyList(chosen)}, opacity=0.4)`;
+      pushCode('splom', state.currentCode);
+      dataHost.innerHTML = '';
       return;
     }
 
@@ -1130,7 +1878,7 @@ function renderCharts() {
       state.currentCode = `df.plot.scatter(x=${py(xCol)}, y=${py(y)})`;
       pushCode('scatter', state.currentCode);
       sub2(subEl, model.scatter.reduce((a, s) => a + s.points.length, 0));
-      CH.renderChart(stage, option);
+      paint(option);
       dataHost.innerHTML = '';
       return;
     }
@@ -1143,6 +1891,7 @@ function renderCharts() {
         return;
       }
       const h = histogram(df.values(y), bins);
+      state.chartModel = { type: 'hist', col: y, edges: h.edges };
       model = {
         categories: h.edges.slice(0, -1).map((e, i) => `${CH.fmtNum(e, 1)}–${CH.fmtNum(h.edges[i + 1], 1)}`),
         series: [{ name: y, values: h.counts }],
@@ -1154,7 +1903,7 @@ function renderCharts() {
       state.currentCode = `df[${py(y)}].plot.hist(bins=${bins}, edgecolor="white")`;
       pushCode('hist', state.currentCode);
       sub2(subEl, h.counts.reduce((a, b) => a + b, 0));
-      CH.renderChart(stage, option);
+      paint(option);
       dataHost.innerHTML = `<table class="data"><thead><tr><th>bin</th><th class="num">${t('stats.freq')}</th></tr></thead><tbody>${
         model.categories.map((c, i) => `<tr><td>${esc(c)}</td><td class="num">${h.counts[i]}</td></tr>`).join('')}</tbody></table>`;
       return;
@@ -1178,6 +1927,7 @@ function renderCharts() {
       let entries = [...groups.entries()].filter(([, v]) => v.length >= 2);
       entries.sort((a, b) => medianOf(b[1]) - medianOf(a[1]));
       if (topN) entries = entries.slice(0, topN);
+      state.chartModel = { type: 'box' };
       model = {
         categories: entries.map(([k]) => k),
         box: entries.map(([k, v]) => {
@@ -1193,7 +1943,7 @@ function renderCharts() {
       state.currentCode = `df.boxplot(column=${py(y)}, by=${py(xCol)}, grid=False)`;
       pushCode('box', state.currentCode);
       sub2(subEl, entries.length);
-      CH.renderChart(stage, option);
+      paint(option);
       dataHost.innerHTML = `<table class="data"><thead><tr><th>${esc(xCol)}</th><th class="num">min</th><th class="num">Q1</th><th class="num">median</th><th class="num">Q3</th><th class="num">max</th></tr></thead><tbody>${
         model.box.map((b) => `<tr><td>${esc(b.name)}</td>${b.stats.map((s) => `<td class="num">${CH.fmtNum(s, 2)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
       return;
@@ -1275,10 +2025,9 @@ function renderCharts() {
     state.currentCode = `${base}${sortCode}${stackCode}\n    .plot(kind=${py(kind)}${extra})`;
     pushCode('chart', state.currentCode);
 
-    subEl.dataset.base = `df.groupby(${pyList(byCols)})[${py(aggCol)}].${aggPy}()`;
-    subEl.textContent = subEl.dataset.base;
+    subEl.textContent = `df.groupby(${pyList(byCols)})[${py(aggCol)}].${aggPy}()`;
     sub2(subEl, catsFinal.length);
-    CH.renderChart(stage, option);
+    paint(option);
 
     dataHost.innerHTML = `<table class="data"><thead><tr><th>${esc(xCol)}</th>${
       series.map((s) => `<th class="num">${esc(s.name)}</th>`).join('')}</tr></thead><tbody>${
@@ -1302,9 +2051,11 @@ function chartPlaceholder(msg) {
 }
 
 /** Append the data-point count to the chart subtitle without losing the base text. */
+/** Append the point count to whatever base the active branch just wrote.
+ *  Each branch always overwrites textContent first, so this needs no cache —
+ *  and a cache would leak the previous chart type's subtitle across switches. */
 function sub2(subEl, n) {
-  if (!subEl.dataset.base) subEl.dataset.base = subEl.textContent;
-  subEl.textContent = `${subEl.dataset.base} · ${t('chart.rows', { n })}`;
+  subEl.textContent = `${subEl.textContent} · ${t('chart.rows', { n })}`;
 }
 const medianOf = (arr) => quantile(arr, 0.5);
 
@@ -1332,8 +2083,17 @@ function renderCode() {
 
 function switchTab(name) {
   state.activeTab = name;
-  $$('.tab').forEach((b) => b.classList.toggle('is-active', b.dataset.tab === name));
-  $$('.panel').forEach((p) => p.classList.toggle('is-active', p.dataset.panel === name));
+  $$('.tab').forEach((b) => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+    b.tabIndex = on ? 0 : -1;
+  });
+  $$('.panel').forEach((p) => {
+    const on = p.dataset.panel === name;
+    p.classList.toggle('is-active', on);
+    p.hidden = !on;
+  });
   if (name === 'charts') setTimeout(() => CH.resizeAll(), 40);
   if (name === 'stats') setTimeout(() => CH.resizeAll(), 40);
 }
@@ -1417,6 +2177,7 @@ function bindEvents() {
     localStorage.setItem('pandalens-theme', next);
     renderCharts();
     renderValueCounts();
+    renderMissingChart();
   });
 
   /* file input + dropzone */
@@ -1456,7 +2217,12 @@ function bindEvents() {
 
   /* table */
   $('#tableSearch').addEventListener('input', (e) => { state.search = e.target.value; state.page = 1; renderTable(); });
-  $('#pageSize').addEventListener('change', (e) => { state.pageSize = Number(e.target.value); state.page = 1; renderTable(); });
+  $('#pageSize').addEventListener('change', (e) => {
+    state.pageSize = e.target.value === 'virtual' ? 'virtual' : Number(e.target.value);
+    state.page = 1;
+    renderTable();
+  });
+  $('#tableScroll').addEventListener('scroll', onVirtualScroll, { passive: true });
   $('#colSearch').addEventListener('input', renderColumnList);
 
   const drop = $('#colVisDrop');
@@ -1474,27 +2240,33 @@ function bindEvents() {
 
   /* stats */
   $('#vcColumn').addEventListener('change', () => { renderValueCounts(); CH.resizeAll(); });
+  $('#testGroup').addEventListener('change', renderTests);
+  $('#testValue').addEventListener('change', renderTests);
 
   /* filters */
   $('#btnAddFilter').addEventListener('click', () => {
     const df = state.df;
     if (!df) return;
     const type = df.columns[0].type;
+    commit('hist.filterAdd');
     state.filters.push({
       col: type === 'number' ? df.numericCols[0] || df.colNames[0] : df.colNames[0],
       op: type === 'number' ? '>' : 'contains',
       value: '',
     });
     rebuild();
-    renderFilterPanel();
+    renderPipelinePanels();
+    syncUrl();
   });
   $('#btnClearFilter').addEventListener('click', () => {
+    if (state.filters.length || state.queryText.trim()) commit('hist.filterClear');
     state.filters = [];
     state.queryText = '';
     $('#queryInput').value = '';
     rebuild();
     renderAfterFilter();
-    pushCode('filter', '# 已清空全部筛选条件');
+    pushCode('filter', t('code.clearedFilters'));
+    syncUrl();
   });
   $('#btnRunQuery').addEventListener('click', runQuery);
   $('#queryInput').addEventListener('keydown', (e) => {
@@ -1505,11 +2277,13 @@ function bindEvents() {
   $('#btnDropna').addEventListener('click', () => {
     const subset = [...$('#dropnaSubset').selectedOptions].map((o) => o.value);
     const before = state.df.nrows;
+    commit('hist.dropna', { cols: subset.join(', ') || '—' });
     state.cleanOps.push({ kind: 'dropna', subset });
     rebuild();
     const removed = before - state.df.nrows;
     pushCode('clean', cleanOpCode({ kind: 'dropna', subset }));
     renderAfterFilter();
+    syncUrl();
     toast(t('clean.dropnaDone', { n: removed }), removed ? 'ok' : 'info');
   });
 
@@ -1518,10 +2292,12 @@ function bindEvents() {
     const value = $('#fillnaValue').value;
     if (!col) { toast(t('clean.noneSelected'), 'err'); return; }
     const before = state.df.values(col).filter((v) => v === null || v === undefined || v === '').length;
+    commit('hist.fillna', { col, value });
     state.cleanOps.push({ kind: 'fillna', col, value });
     rebuild();
     pushCode('clean', cleanOpCode({ kind: 'fillna', col, value }));
     renderAfterFilter();
+    syncUrl();
     toast(t('clean.fillnaDone', { n: before }), before ? 'ok' : 'info');
   });
 
@@ -1529,31 +2305,37 @@ function bindEvents() {
     const col = $('#astypeCol').value;
     const type = $('#astypeType').value;
     if (!col) { toast(t('clean.noneSelected'), 'err'); return; }
+    commit('hist.astype', { col, type });
     state.cleanOps.push({ kind: 'astype', col, type });
     rebuild();
     pushCode('clean', cleanOpCode({ kind: 'astype', col, type }));
     renderAfterFilter();
+    syncUrl();
     toast(t('clean.astypeDone', { col, type }), 'ok');
   });
 
   $('#btnDropDup').addEventListener('click', () => {
     const subset = [...$('#dupSubset').selectedOptions].map((o) => o.value);
     const before = state.df.nrows;
+    commit('hist.dropdup', { cols: subset.join(', ') || '—' });
     state.cleanOps.push({ kind: 'dropdup', subset });
     rebuild();
     const removed = before - state.df.nrows;
     pushCode('clean', cleanOpCode({ kind: 'dropdup', subset }));
     renderAfterFilter();
+    syncUrl();
     toast(t('clean.dupDone', { n: removed }), removed ? 'ok' : 'info');
   });
 
   $('#btnDropCol').addEventListener('click', () => {
     const cols = [...$('#dropCol').selectedOptions].map((o) => o.value);
     if (!cols.length) { toast(t('clean.noneSelected'), 'err'); return; }
+    commit('hist.dropcol', { cols: cols.join(', ') });
     state.cleanOps.push({ kind: 'dropcol', cols });
     rebuild();
     pushCode('clean', cleanOpCode({ kind: 'dropcol', cols }));
     renderAfterFilter();
+    syncUrl();
     toast(t('clean.dropColDone', { cols: cols.join(', ') }), 'ok');
   });
 
@@ -1561,10 +2343,12 @@ function bindEvents() {
     const col = $('#renameCol').value;
     const value = $('#renameValue').value.trim();
     if (!col || !value) { toast(t('clean.noneSelected'), 'err'); return; }
+    commit('hist.rename', { col, name: value });
     state.cleanOps.push({ kind: 'rename', col, value });
     rebuild();
     pushCode('clean', cleanOpCode({ kind: 'rename', col, value }));
     renderAfterFilter();
+    syncUrl();
     toast(t('clean.renameDone', { name: value }), 'ok');
   });
 
@@ -1573,14 +2357,37 @@ function bindEvents() {
   $('#btnGroupbyDemo').addEventListener('click', () => runGroupby(true));
 
   /* charts */
-  ['#chX', '#chY', '#chSeries', '#chAgg', '#chSort'].forEach((s) => {
-    $(s).addEventListener('change', () => { $('#chartSub').dataset.base = ''; renderCharts(); });
+  ['#chX', '#chY', '#chSeries', '#chAgg', '#chSort', '#chNumCols'].forEach((s) => {
+    $(s).addEventListener('change', () => {
+      renderCharts();
+      syncUrl();
+    });
   });
   ['#chTop', '#chBins'].forEach((s) => $(s).addEventListener('input', () => renderCharts()));
   ['#chStack', '#chSmooth', '#chLabel'].forEach((s) => $(s).addEventListener('change', () => renderCharts()));
   $('#btnChartData').addEventListener('click', () => $('#chartDataTable').classList.toggle('collapsed'));
   $('#btnDownloadPng').addEventListener('click', () => {
     if (CH.downloadChartPng($('#mainChart'), `pandalens-${state.chartType}.png`)) toast(t('chart.exported'), 'ok');
+  });
+
+  /* undo / redo / share */
+  $('#btnUndo').addEventListener('click', undo);
+  $('#btnRedo').addEventListener('click', redo);
+  $('#btnShare').addEventListener('click', (e) => {
+    syncUrl();
+    copyText(state.shareUrl || location.href, e.currentTarget);
+  });
+
+  /* colour-blind safe palette */
+  $('#btnCbSafe').addEventListener('click', () => {
+    const on = !CH.isColorblindSafe();
+    CH.setColorblindSafe(on);
+    localStorage.setItem('pandalens-cbsafe', on ? '1' : '0');
+    $('#btnCbSafe').classList.toggle('is-on', on);
+    $('#btnCbSafe').setAttribute('aria-pressed', on ? 'true' : 'false');
+    renderCharts();
+    renderValueCounts();
+    renderMissingChart();
   });
 
   /* code */
@@ -1601,7 +2408,10 @@ function bindEvents() {
       if (e.key === 'Escape') e.target.blur();
       return;
     }
-    if (e.key >= '1' && e.key <= '6') {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+    } else if (e.key >= '1' && e.key <= '6') {
       const names = ['table', 'stats', 'filter', 'groupby', 'charts', 'code'];
       switchTab(names[Number(e.key) - 1]);
     } else if (e.key === '/') {
@@ -1619,6 +2429,43 @@ function bindEvents() {
   });
 }
 
+/**
+ * Replay a share link. A link can only name a bundled dataset — an uploaded
+ * file is deliberately never encoded, because that would mean putting someone's
+ * data in a URL.
+ */
+function applyPayload(p) {
+  state.cleanOps = (p.c || []).filter(Boolean).map((o) => ({ ...o }));
+  state.filters = (p.f || []).filter(Boolean).map((f) => ({ ...f }));
+  state.queryText = p.q || '';
+  $('#queryInput').value = state.queryText;
+  rebuild();
+
+  if (p.t && CHART_TYPES.some(([id]) => id === p.t)) state.chartType = p.t;
+  state.autoFilledFor = null;
+  autoFillChartConfig();
+  state.autoFilledFor = state.raw;
+
+  const setIf = (sel, val) => {
+    if (val === undefined || val === null || val === '') return;
+    const node = $(sel);
+    if (node && [...node.options].some((o) => o.value === val)) node.value = val;
+  };
+  setIf('#chX', p.x); setIf('#chY', p.y); setIf('#chSeries', p.g);
+  setIf('#chAgg', p.a); setIf('#chSort', p.o);
+  if (p.k !== undefined && p.k !== '') $('#chTop').value = p.k;
+  if (p.b !== undefined && p.b !== '') $('#chBins').value = p.b;
+  if (Array.isArray(p.m) && p.m.length) {
+    const sel = $('#chNumCols');
+    if (sel) [...sel.options].forEach((o) => { o.selected = p.m.includes(o.value); });
+  }
+
+  $$('.chart-type').forEach((x) => x.classList.toggle('is-on', x.dataset.type === state.chartType));
+  syncChartFields();
+  refreshAll();
+  if (p.tab) switchTab(p.tab);
+}
+
 /* --------------------------------- init ---------------------------------- */
 
 async function init() {
@@ -1627,15 +2474,35 @@ async function init() {
   const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   document.documentElement.dataset.theme = saved || (prefersDark ? 'dark' : 'light');
 
-  setLang('zh');
-  $$('.lang-opt').forEach((o) => o.classList.toggle('is-on', o.dataset.lang === 'zh'));
+  // colour-blind safe palette
+  const cbOn = localStorage.getItem('pandalens-cbsafe') === '1';
+  CH.setColorblindSafe(cbOn);
+  const cbBtn = $('#btnCbSafe');
+  if (cbBtn) {
+    cbBtn.classList.toggle('is-on', cbOn);
+    cbBtn.setAttribute('aria-pressed', cbOn ? 'true' : 'false');
+  }
+
+  const payload = payloadFromUrl();
+  const lang = payload && payload.lang === 'en' ? 'en' : 'zh';
+  setLang(lang);
+  $$('.lang-opt').forEach((o) => o.classList.toggle('is-on', o.dataset.lang === lang));
   applyStatic();
 
-  const help = ['help.k1', 'help.k2', 'help.k3', 'help.k4', 'help.k5', 'help.k6'];
+  const help = ['help.k1', 'help.k2', 'help.k3', 'help.k4', 'help.k5',
+    'help.k6', 'help.k7', 'help.k8', 'help.k9'];
   $('#helpList').innerHTML = help.map((k) => `<li>${esc(t(k))}</li>`).join('');
 
   bindEvents();
-  await loadSample('sales');
+  await loadSample(payload && payload.s ? payload.s : 'sales');
+
+  if (payload && payload.s) {
+    applyPayload(payload);
+    toast(t('share.loaded'), 'info');
+  } else if (payload) {
+    // the link pointed at an uploaded file we cannot ship in a URL
+    toast(t('share.noData'), 'info');
+  }
 
   // warm the chart library, then paint every chart
   try {
@@ -1643,10 +2510,13 @@ async function init() {
     state.echartsReady = true;
     renderChartTypes();
     renderValueCounts();
+    renderMissingChart();
     renderCharts();
   } catch {
     toast(t('chart.libMissing'), 'err');
   }
+
+  syncUrl();
 }
 
 document.addEventListener('DOMContentLoaded', init);
