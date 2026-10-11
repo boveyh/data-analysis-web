@@ -43,6 +43,25 @@ export function palette() {
   return ['--c1', '--c2', '--c3', '--c4', '--c5', '--c6', '--c7', '--c8', '--c9', '--c10'].map(cssVar);
 }
 
+/* Okabe & Ito's palette — distinguishable under deuteranopia, protanopia and
+   tritanopia. Swapped in wholesale when the reader turns on colour-blind mode. */
+const OKABE_ITO = [
+  '#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9',
+  '#D55E00', '#F0E442', '#8C564B', '#117733', '#332288',
+];
+
+let cbSafe = false;
+export function setColorblindSafe(on) { cbSafe = !!on; }
+export function isColorblindSafe() { return cbSafe; }
+
+/** Sequential/diverging ramp for correlation. RdBu-style blue↔red is the
+ *  classic trap for red-green colour blindness; blue↔orange is not. */
+export function divergingRamp() {
+  return cbSafe
+    ? ['#1c5f9e', '#7fb2da', '#f2f2f2', '#f2a65a', '#c25203']
+    : ['#3b82f6', '#93c5fd', '#f1f5f9', '#fca5a5', '#ef4444'];
+}
+
 function theme() {
   return {
     text: cssVar('--text') || '#14161d',
@@ -50,8 +69,9 @@ function theme() {
     text3: cssVar('--text-3') || '#8b92a1',
     border: cssVar('--border') || '#e6e8ec',
     surface: cssVar('--surface') || '#fff',
+    surface3: cssVar('--surface-3') || '#f1f3f6',
     font: cssVar('--font-sans') || 'sans-serif',
-    colors: palette(),
+    colors: cbSafe ? OKABE_ITO : palette(),
   };
 }
 
@@ -355,7 +375,7 @@ export function buildOption(type, model, cfg, t = theme()) {
           min: -1, max: 1, calculable: true, orient: 'vertical', right: 6, top: 'middle',
           itemWidth: 12, itemHeight: 130,
           textStyle: { color: t.text3, fontFamily: t.font, fontSize: 10 },
-          inRange: { color: ['#3b82f6', '#93c5fd', '#f1f5f9', '#fca5a5', '#ef4444'] },
+          inRange: { color: divergingRamp() },
           formatter: (v) => Number(v).toFixed(1),
         },
         series: [{
@@ -376,6 +396,255 @@ export function buildOption(type, model, cfg, t = theme()) {
     default:
       return opt;
   }
+}
+
+/* --------------------------- missingness map ----------------------------- */
+
+/**
+ * Missingno-style nullity matrix: one mark per (row, column) cell, columns
+ * ordered worst-first and annotated with their missing rate. Reading the
+ * pattern — isolated holes vs whole blocks — is what tells you whether a gap
+ * is random or structural, which a headcount alone never shows.
+ *
+ * @param {object} model { matrix, labels }
+ */
+export function missingnessOption(model, t = theme()) {
+  const { cols, rates, grid, sampled, total } = model.matrix;
+  const rows = grid.length;
+  const missingColor = cbSafe ? '#0072B2' : '#D55E00';
+  const presentColor = t.surface3;
+
+  const data = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols.length; c++) data.push([c, r, grid[r][c] ? 1 : 0]);
+  }
+
+  const rot = cols.length > 8 ? 42 : (cols.length > 5 ? 24 : 0);
+
+  return {
+    color: t.colors,
+    textStyle: { fontFamily: t.font, color: t.text2 },
+    animationDuration: 400,
+    animation: false,
+    grid: { left: 12, right: 14, top: 12, bottom: 58, containLabel: true },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: t.surface,
+      borderColor: t.border,
+      borderWidth: 1,
+      padding: [9, 12],
+      textStyle: { color: t.text, fontFamily: t.font, fontSize: 12 },
+      extraCssText: 'box-shadow:0 8px 26px rgba(16,24,40,.16);border-radius:10px;',
+      formatter: (p) => {
+        const [c, r, v] = p.value;
+        return `<b>${cols[c]}</b> · ${(rates[c] * 100).toFixed(1)}% ${model.labels.missing}<br/>` +
+          `${model.labels.row} ${r + 1}${v ? ' — ' + model.labels.isMissing : ''}`;
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: cols.map((c, i) => `${c}\n${(rates[i] * 100).toFixed(0)}%`),
+      ...axisCommon(t),
+      splitLine: { show: false },
+      axisLabel: {
+        color: t.text3, fontFamily: t.font, fontSize: 10.5,
+        rotate: rot, interval: 0, hideOverlap: false, lineHeight: 13,
+      },
+    },
+    yAxis: {
+      type: 'category',
+      data: Array.from({ length: rows }, (_, i) => String(i)),
+      inverse: true,
+      ...axisCommon(t),
+      splitLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { show: false },
+      name: `${model.labels.rows}${model.sampledNote || ''}`,
+      nameTextStyle: { color: t.text3, fontFamily: t.font, fontSize: 10, padding: [0, 0, 0, 0] },
+      nameGap: 8,
+    },
+    visualMap: {
+      type: 'piecewise',
+      show: true,
+      orient: 'horizontal',
+      left: 'center',
+      bottom: 0,
+      itemWidth: 14,
+      itemHeight: 11,
+      itemGap: 14,
+      textStyle: { color: t.text3, fontFamily: t.font, fontSize: 11 },
+      pieces: [
+        { value: 0, label: model.labels.present, color: presentColor },
+        { value: 1, label: model.labels.missing, color: missingColor },
+      ],
+    },
+    series: [{
+      type: 'heatmap',
+      data,
+      itemStyle: { borderWidth: 0, borderRadius: 0 },
+      emphasis: { itemStyle: { borderColor: t.text, borderWidth: 1.4 } },
+      progressive: 6000,
+      progressiveThreshold: 6000,
+    }],
+  };
+}
+
+/* --------------------------- parallel coordinates ------------------------ */
+
+/**
+ * Parallel coordinates — every row becomes a polyline crossing all numeric
+ * axes. The fastest way to spot whether clusters separate on some combination
+ * of dimensions, which a scatter matrix only shows two at a time.
+ *
+ * @param {object} model { dims: [{name,min,max}], groups: [{name,color,rows}] }
+ */
+export function parallelOption(model, cfg = {}, t = theme()) {
+  const c = { smooth: false, opacity: 0.45, ...cfg };
+  const k = model.dims.length;
+
+  return {
+    color: t.colors,
+    textStyle: { fontFamily: t.font, color: t.text2 },
+    animationDuration: 520,
+    parallel: {
+      left: 56,
+      right: 56,
+      top: 58,
+      bottom: 26,
+      parallelAxisDefault: {
+        axisLine: { lineStyle: { color: t.border } },
+        axisTick: { lineStyle: { color: t.border } },
+        axisLabel: { color: t.text3, fontFamily: t.font, fontSize: 10.5 },
+        nameTextStyle: { color: t.text2, fontFamily: t.font, fontSize: 11 },
+        nameGap: 12,
+        nameLocation: 'start',
+        nameRotate: 0,
+      },
+    },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: t.surface,
+      borderColor: t.border,
+      borderWidth: 1,
+      padding: [9, 12],
+      textStyle: { color: t.text, fontFamily: t.font, fontSize: 12 },
+      extraCssText: 'box-shadow:0 8px 26px rgba(16,24,40,.16);border-radius:10px;',
+      formatter: (p) => {
+        const lines = model.dims.map((d, i) => `${d.name} <b>${fmtNum(p.value[i])}</b>`);
+        return `${p.seriesName ? `<b>${p.seriesName}</b><br/>` : ''}${lines.join('<br/>')}`;
+      },
+    },
+    parallelAxis: model.dims.map((d, i) => ({
+      dim: i,
+      name: d.name,
+      min: d.min === d.max ? d.min - 0.5 : d.min,
+      max: d.min === d.max ? d.max + 0.5 : d.max,
+      type: 'value',
+    })),
+    series: model.groups.map((g) => ({
+      name: g.name,
+      type: 'parallel',
+      smooth: c.smooth ? 0.3 : false,
+      lineStyle: { width: k > 6 ? 1.2 : 1.8, opacity: c.opacity, color: g.color },
+      emphasis: { lineStyle: { width: 3.2, opacity: 1 } },
+      data: g.rows,
+    })),
+  };
+}
+
+/* ---------------------------- scatter matrix ----------------------------- */
+
+/**
+ * Scatter-plot matrix (SPLOM): every pair of numeric variables in one figure.
+ * Built from k×k ECharts grids — labels only on the outer edges, variable
+ * names on the diagonal.
+ */
+export function splomOption(model, t = theme()) {
+  const vars = model.variables;
+  const k = vars.length;
+  const gap = 0.6;
+  /* The outside margins are reserved for the two label edges a scatter matrix
+   * keeps: tick labels down the left column and along the bottom row. With
+   * `containLabel: false` the labels are drawn outside the grid, so the grid
+   * must stop short of the canvas or the last row gets clipped. */
+  const M = { left: 8, right: 1, top: 4, bottom: 8 };
+  const spanW = (100 - M.left - M.right) / k;
+  const spanH = (100 - M.top - M.bottom) / k;
+
+  const grids = [], xAxes = [], yAxes = [], series = [], titles = [], pairs = [];
+
+  for (let r = 0; r < k; r++) {
+    for (let c = 0; c < k; c++) {
+      const left = M.left + c * spanW;
+      const top = M.top + r * spanH;
+
+      if (r === c) {
+        titles.push({
+          text: vars[r],
+          left: `${left + spanW / 2}%`,
+          top: `${top + spanH / 2}%`,
+          textAlign: 'center',
+          textVerticalAlign: 'middle',
+          textStyle: { color: t.text2, fontFamily: t.font, fontSize: 11.5, fontWeight: 500 },
+        });
+        continue;
+      }
+
+      // grid indices are dense: diagonal cells contribute a label, not a plot
+      const gi = grids.length;
+      grids.push({
+        left: `${left}%`,
+        top: `${top}%`,
+        width: `${spanW - gap}%`,
+        height: `${spanH - gap}%`,
+        containLabel: false,
+      });
+      xAxes.push({
+        type: 'value', gridIndex: gi, scale: true,
+        axisLine: { show: false }, axisTick: { show: false },
+        axisLabel: { show: r === k - 1, color: t.text3, fontFamily: t.font, fontSize: 9.5, hideOverlap: true },
+        splitLine: { lineStyle: { color: t.border, type: 'dashed', opacity: 0.5 } },
+      });
+      yAxes.push({
+        type: 'value', gridIndex: gi, scale: true,
+        axisLine: { show: false }, axisTick: { show: false },
+        axisLabel: { show: c === 0, color: t.text3, fontFamily: t.font, fontSize: 9.5, hideOverlap: true },
+        splitLine: { lineStyle: { color: t.border, type: 'dashed', opacity: 0.5 } },
+      });
+      pairs.push([c, r]);                       // x = column var, y = row var
+      series.push({
+        type: 'scatter', xAxisIndex: gi, yAxisIndex: gi,
+        symbolSize: k > 3 ? 3.4 : 4.6,
+        itemStyle: { opacity: 0.5, borderWidth: 0, color: t.colors[0] },
+        emphasis: { itemStyle: { opacity: 1 } },
+        data: model.cells[`${r},${c}`] || [],
+      });
+    }
+  }
+
+  return {
+    color: t.colors,
+    textStyle: { fontFamily: t.font, color: t.text2 },
+    animationDuration: 420,
+    title: titles,
+    grid: grids,
+    xAxis: xAxes,
+    yAxis: yAxes,
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: t.surface,
+      borderColor: t.border,
+      borderWidth: 1,
+      padding: [9, 12],
+      textStyle: { color: t.text, fontFamily: t.font, fontSize: 12 },
+      extraCssText: 'box-shadow:0 8px 26px rgba(16,24,40,.16);border-radius:10px;',
+      formatter: (p) => {
+        const [xi, yi] = pairs[p.seriesIndex] || [0, 0];
+        return `${vars[xi]} <b>${fmtNum(p.value[0])}</b><br/>${vars[yi]} <b>${fmtNum(p.value[1])}</b>`;
+      },
+    },
+    series,
+  };
 }
 
 /* ------------------------- standalone horizontal bar --------------------- */
@@ -446,6 +715,17 @@ export function renderChart(dom, option, { notMerge = true } = {}) {
   }
   chart.setOption(option, notMerge);
   return chart;
+}
+
+/**
+ * Attach (or replace) the click handler on a chart. Always clears the previous
+ * binding first — re-rendering must not stack listeners.
+ */
+export function bindChartClick(dom, handler) {
+  const c = instances.get(dom);
+  if (!c || c.isDisposed?.()) return;
+  c.off('click');
+  if (handler) c.on('click', handler);
 }
 
 /** Dispose the instance bound to a container and empty it. */
