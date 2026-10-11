@@ -5,6 +5,16 @@
   "type": "module",
   "description": "PandaLens — a pure front-end, bilingual visual data-analysis workbench that mirrors the pandas API.",
   "scripts": {
-    "test": "node tools/selftest.mjs"
+    "test": "node tools/selftest.mjs && node tools/deps-audit.mjs",
+    "test:engine": "node tools/selftest.mjs",
+    "test:audit": "node tools/deps-audit.mjs",
+    "test:e2e": "node tools/e2e/smoke.mjs",
+    "test:all": "npm test && npm run test:e2e",
+    "shots": "node tools/e2e/screenshots.mjs",
+    "serve": "node tools/e2e/server.mjs 5173",
+    "stats": "node tools/dataset-stats.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1"
   }
 }

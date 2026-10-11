@@ -1,0 +1,76 @@
+name: CI
+
+# Two independent gates:
+#   engine — no browser needed, so it always runs and finishes in seconds
+#   e2e    — real Chrome against a real HTTP origin, because the things most
+#            likely to break (ES modules, the parse worker, URL state, ECharts
+#            drill-down, virtual scrolling) are invisible to Node-only tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: Engine & wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Statistical engine self-test
+        run: node tools/selftest.mjs
+
+      - name: Selector / translation / CSS wiring audit
+        run: node tools/deps-audit.mjs
+
+      - name: Syntax-check every module
+        run: |
+          for f in js/*.js tools/*.mjs tools/e2e/*.mjs; do
+            node --check "$f"
+          done
+
+  e2e:
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+    needs: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install puppeteer-core
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chrome for Testing
+        run: npx --yes @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/chrome"
+
+      - name: Point the runner at that Chrome
+        run: |
+          CHROME=$(find "$RUNNER_TEMP/chrome" -type f -name chrome -perm -u+x | head -n 1)
+          echo "Using $CHROME"
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+
+      - name: Run browser checks
+        run: node tools/e2e/smoke.mjs
+
+      - name: Capture screenshots
+        if: always()
+        run: node tools/e2e/screenshots.mjs
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandalens-screenshots
+          path: tools/e2e/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14

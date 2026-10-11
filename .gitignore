@@ -7,3 +7,6 @@
 Thumbs.db
 *.log
 node_modules/
+
+# end-to-end test output (regenerated locally and in CI, never committed)
+tools/e2e/artifacts/
