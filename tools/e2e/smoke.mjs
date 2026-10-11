@@ -520,7 +520,15 @@ check('taxis loaded', st.headerName === 'taxis.csv', st.headerName);
 const totalRows = Number(st.rows.replace(/[^\d]/g, ''));
 check('taxis is large enough to matter', totalRows > 5000, String(totalRows));
 
-await tab('table', 500);
+/* a chi-square this large overflows double precision and comes back as exactly
+ * 0; printing "0.00e+0" would look like a broken number rather than a tiny p */
+await tab('stats', 800);
+const pValues = await evalPage(() => [...document.querySelectorAll('#testTable tbody tr')]
+  .map((r) => r.children[3]?.textContent.trim())
+  .filter((v) => v && v !== '—'));
+check('underflowing p-values are labelled, not printed as zero',
+  pValues.length > 0 && pValues.every((v) => !/^0(\.0+)?e\+?0?$/.test(v)), pValues.join(', '));
+await tab('table', 400);
 await page.select('#pageSize', 'virtual');
 await sleep(900);
 const virt = await evalPage(() => ({

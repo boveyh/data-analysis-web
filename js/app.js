@@ -1211,9 +1211,12 @@ function renderMissingChart() {
   }, CH.chartTheme()));
 }
 
-/** p-values are only interesting for a few digits, then they are just "tiny". */
+/** p-values are only interesting for a few digits, then they are just "tiny".
+ *  A chi-square on a few thousand rows overflows double precision and returns
+ *  exactly 0 — "0.00e+0" reads like a broken number, so name the floor. */
 function fmtP(p) {
   if (p === null || p === undefined || Number.isNaN(p)) return '—';
+  if (p === 0) return '< 1e-308';
   if (p < 1e-4) return p.toExponential(2);
   return p.toFixed(4);
 }
