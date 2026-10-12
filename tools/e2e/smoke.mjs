@@ -12,6 +12,7 @@
  * ========================================================================== */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './server.mjs';
@@ -642,9 +643,106 @@ await page.click('#btnTheme');
 await sleep(600);
 check('theme toggles back', (await evalPage(() => document.documentElement.dataset.theme)) === 'light');
 
+/* --------------------------- 14. uploaded file --------------------------- */
+/* Everything above runs on bundled datasets, but dragging in your own CSV is
+ * the main entry point. Exercise that path with a temp file that carries two
+ * deliberately dirty columns, so the missingness machinery has real work. */
+
+group('14 · a file you drag in yourself');
+
+const tmpCsv = path.join(os.tmpdir(), `pandalens-upload-${process.pid}.csv`);
+{
+  const lines = ['order_id,city,channel,amount,discount,member'];
+  let seed = 987654321;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 1; i <= 900; i++) {
+    const member = rnd() < 0.5 ? 'Yes' : 'No';
+    const city = ['A', 'B', 'C'][Math.floor(rnd() * 3)];
+    /* members spend noticeably more — the t-test below should find this */
+    const amount = (member === 'Yes' ? 52 : 44) + rnd() * 18;
+    lines.push([
+      i, city, rnd() < 0.5 ? 'x' : 'y', amount.toFixed(2),
+      rnd() < 0.6 ? '' : '0.10', member,
+    ].join(','));
+  }
+  fs.writeFileSync(tmpCsv, lines.join('\n') + '\n');
+}
+
+await tab('table', 400);
+const fileInput = await page.$('#fileInput');
+await fileInput.uploadFile(tmpCsv);
+await sleep(2800);
+const up = await evalPage(() => ({
+  rows: document.querySelector('#kpiRows').textContent,
+  cols: document.querySelector('#kpiCols').textContent,
+  name: document.querySelector('#headerDatasetName').textContent,
+  shape: document.querySelector('#headerDatasetShape').textContent,
+  active: [...document.querySelectorAll('#sampleList .sample-item')]
+    .filter((e) => e.classList.contains('is-active')).length,
+}));
+check('an uploaded file replaces the frame',
+  up.rows.replace(/[^\d]/g, '') === '900', up.rows);
+check('the uploaded column count is right', up.cols === '6', up.cols);
+check('the header names the uploaded file', /pandalens-upload/.test(up.name), up.name);
+check('the shape line reflects the upload', /900/.test(up.shape), up.shape);
+check('no bundled dataset stays highlighted', up.active === 0, String(up.active));
+
+await tab('stats', 1500);
+const upStats = await evalPage(() => ({
+  miss: document.querySelector('#missingTable').textContent.replace(/\s+/g, ' '),
+  hasMissCanvas: document.querySelectorAll('#missChart canvas').length,
+  group: document.querySelector('#testGroup').value,
+  cat2: [...document.querySelectorAll('#testCat2 option')].map((o) => o.value),
+}));
+check('the uploaded missing column is detected', /discount/.test(upStats.miss), upStats.miss.slice(0, 90));
+check('the missingness map draws for the upload', upStats.hasMissCanvas > 0);
+check('the cross-tab picker drops the active group column',
+  !upStats.cat2.includes(upStats.group), `group=${upStats.group} cat2=${upStats.cat2.join(',')}`);
+
+await page.select('#testGroup', 'member');
+await page.select('#testValue', 'amount');
+await sleep(900);
+const upTest = await evalPage(() => document.querySelector('#testTable').textContent.replace(/\s+/g, ' '));
+check('a t-test runs on the uploaded columns', /Welch/.test(upTest), upTest.slice(0, 110));
+check('the t-test label carries both group means, not just a p-value',
+  /μ=\d/.test(upTest), upTest.slice(0, 110));
+await page.select('#testCat2', 'channel');
+await sleep(900);
+check('the chi-square follows the chosen cross-tab column',
+  /member\s*×\s*channel/.test(await evalPage(() => document.querySelector('#testTable').textContent)),
+  'expected member × channel');
+
+await tab('charts', 900);
+await page.click('.chart-type[data-type="hist"]');
+await sleep(1300);
+check('a histogram draws the uploaded column',
+  (await evalPage(() => document.querySelectorAll('#mainChart canvas').length)) > 0);
+check('the chart subtitle names the uploaded column',
+  /amount/.test(await evalPage(() => document.querySelector('#chartSub').textContent)),
+  await evalPage(() => document.querySelector('#chartSub').textContent));
+
+await tab('filter', 700);
+await page.click('#btnAddFilter');
+await sleep(800);
+const upFilter = await evalPage(() => ({
+  rows: document.querySelectorAll('#filterRows .filter-row').length,
+  cols: [...document.querySelectorAll('#filterRows .filter-row option')].map((o) => o.value),
+}));
+check('the filter builder lists the uploaded columns',
+  upFilter.rows === 1 && upFilter.cols.includes('amount'), upFilter.cols.slice(0, 6).join(','));
+await page.click('#btnUndo');
+await sleep(900);
+check('undo works on an uploaded pipeline',
+  (await evalPage(() => document.querySelectorAll('#filterRows .filter-row').length)) === 0);
+
+const upHash = await evalPage(() => location.hash);
+check('the share hash carries the recipe, never the 900 rows',
+  upHash.startsWith('#s=') && upHash.length < 900, `hash is ${upHash.length} chars`);
+fs.unlinkSync(tmpCsv);
+
 /* ------------------------------ teardown -------------------------------- */
 
-group('14 · console hygiene');
+group('15 · console hygiene');
 const relevant = consoleErrors.filter((e) => !/favicon/i.test(e));
 check('no console or page errors', relevant.length === 0, relevant.slice(0, 4).join(' || '));
 check('no failed same-origin requests', requestFailures.length === 0, requestFailures.slice(0, 3).join(' || '));

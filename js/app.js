@@ -1228,6 +1228,7 @@ function renderTests() {
 
   const gSel = $('#testGroup');
   const vSel = $('#testValue');
+  const cSel = $('#testCat2');
 
   /* repopulate only when the frame's columns actually changed */
   const sig = `${df.ncols}|${df.colNames.join('\u0001')}`;
@@ -1250,6 +1251,30 @@ function renderTests() {
   const gCol = gSel.value;
   const vCol = vSel.value;
 
+  /* The cross-tab column can never equal the grouping column, so its options
+   * depend on the grouping selection and are rebuilt on every pass. On the
+   * first pass pick the categorical column whose cardinality is closest to 3 —
+   * wide enough to be interesting, narrow enough for the expected counts to
+   * stay usable. */
+  if (cSel) {
+    const cands = df.categoricalCols.filter(
+      (c) => c !== gCol && df.nunique(c) >= 2 && df.nunique(c) <= 12,
+    );
+    const want = `${gCol}\u0001${cands.join('\u0001')}`;
+    if (cSel.dataset.sig !== want) {
+      const prev = cSel.value;
+      cSel.dataset.sig = want;
+      cSel.innerHTML = '';
+      for (const c of cands) cSel.appendChild(el('option', { value: c, text: c }));
+      if (cands.includes(prev)) cSel.value = prev;
+      else if (cands.length) {
+        cSel.value = [...cands].sort(
+          (a, b) => Math.abs(df.nunique(a) - 3) - Math.abs(df.nunique(b) - 3),
+        )[0];
+      }
+    }
+  }
+
   if (!gCol || !vCol || !df.has(gCol) || !df.has(vCol)) {
     host.innerHTML = `<p class="muted-note" style="padding:16px">${esc(t('test.needCols'))}</p>`;
     return;
@@ -1271,7 +1296,13 @@ function renderTests() {
   if (levels.length === 2 && groups.length === 2) {
     const r = welchTTest(buckets.get(levels[0]), buckets.get(levels[1]));
     if (r) found.push({
-      key: 'test.welchT', params: { a: levels[0], b: levels[1] },
+      /* the p-value says "different", not "which is bigger" — carry both group
+         means into the label so the direction is readable at a glance */
+      key: 'test.welchT',
+      params: {
+        a: levels[0], b: levels[1],
+        am: CH.fmtNum(r.mean1, 2), bm: CH.fmtNum(r.mean2, 2),
+      },
       stat: r.t, df: r.df, p: r.p,
       effect: r.cohensD, effectName: "Cohen's d",
       scipy: `stats.ttest_ind(${py(vCol)}[g == ${py(levels[0])}], ${py(vCol)}[g == ${py(levels[1])}], equal_var=False)`,
@@ -1287,10 +1318,11 @@ function renderTests() {
     });
   }
 
-  /* chi-square needs a second categorical column with a sane cardinality */
-  const other = df.categoricalCols
-    .filter((c) => c !== gCol && df.nunique(c) >= 2 && df.nunique(c) <= 12)
-    .sort((a, b) => Math.abs(df.nunique(a) - 3) - Math.abs(df.nunique(b) - 3))[0];
+  /* chi-square needs a second categorical column; which one is the user's call,
+     defaulting to a sensible middle-cardinality pick only on first render */
+  const other = cSel && cSel.value && cSel.value !== gCol && df.has(cSel.value)
+    ? cSel.value
+    : null;
   let chiInfo = null;
   if (other) {
     const ct = df.crosstab(gCol, other);
@@ -2245,6 +2277,7 @@ function bindEvents() {
   $('#vcColumn').addEventListener('change', () => { renderValueCounts(); CH.resizeAll(); });
   $('#testGroup').addEventListener('change', renderTests);
   $('#testValue').addEventListener('change', renderTests);
+  $('#testCat2').addEventListener('change', renderTests);
 
   /* filters */
   $('#btnAddFilter').addEventListener('click', () => {
