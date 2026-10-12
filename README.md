@@ -211,9 +211,11 @@ data-analysis-web/
 │   ├── dataframe.js        # pandas 风格的 DataFrame 引擎（列式存储 + 统计推断）
 │   ├── parse.js            # 零依赖 CSV / TSV / JSON 解析器
 │   ├── parse.worker.js     # 同一套解析器的 Web Worker 外壳（大文件不阻塞主线程）
-│   ├── charts.js           # ECharts 封装（12 种图表 + 多 CDN 兜底 + 色盲安全调色板）
+│   ├── charts.js           # ECharts 封装（12 种图表 + 色盲安全调色板）
 │   ├── i18n.js             # 中英双语词条与插值
-│   └── app.js              # 应用主控：管线、历史、URL 状态、渲染、事件、代码生成
+│   ├── app.js              # 应用主控：管线、历史、URL 状态、渲染、事件、代码生成
+│   └── vendor/
+│       └── echarts.min.js  # 随仓库发布的 ECharts 5.5.1（1 MB，离线可用）
 ├── data/
 │   ├── sales.csv           # 默认数据集（合成，210 × 16）
 │   ├── iris.csv            # 150 × 5     经典分类
@@ -246,18 +248,29 @@ data-analysis-web/
 ## 七、技术选型
 
 * **零构建、零框架**：原生 ES Module + 原生 DOM，克隆即用；
-* **ECharts 5** 负责图表渲染（带 4 个 CDN 依次兜底，单点故障不影响使用）；
+* **ECharts 5.5.1** 负责图表渲染，**随仓库发布**在 `js/vendor/` 下，打开页面即从本地加载（实测 0.4 秒，无需任何网络往返，离线也能用）。另有 4 个 CDN 镜像作为兜底，仅在本地副本缺失时才会被请求；
 * **自研 DataFrame 引擎**：不依赖任何数据处理库，统计口径对齐 pandas / numpy（样本标准差 `ddof=1`、分位数线性插值、`corr` 使用成对完整观测）；
 * **自研统计推断**：Lanczos `log Γ`、正则化不完全 Γ / Β 函数，从零实现 χ²、t、F 分布尾概率，不引入 scipy；
 * **自研文件解析**：正确处理引号包裹、转义引号、CRLF、BOM、重复表头（`a, a.1, a.2`），并可在 Web Worker 中运行；
 * **状态即配方**：撤销历史与分享链接都只保存「操作列表」，不复制数据，因此内存占用与数据规模无关。
+
+> **关于 ECharts 的加载方式**（踩过的三个坑，按发现顺序）：图表库最初完全走 CDN，带 4 个镜像依次兜底。
+> 兜底链只在 `onerror` 时前移，而**被限速的镜像不会报错** —— 本机环境里 jsDelivr 25 秒只吐了 96 KB，
+> 另外三个健康镜像却在旁边干等，整页图表一直空白。
+> 改成并行竞速后又踩到第二个坑：镜像按下载完成顺序执行，**已经进入执行队列的落败者仍会跑完**，
+> 它的 UMD 包装会再执行一次 `window.echarts = {}`，把实例注册表从已经画好的图表脚下换掉
+> （症状很有迷惑性：`getInstanceByDom` 返回 undefined，而 canvas 明明就在 DOM 里）。
+> 最后一个是**假 200**：`lib.baomitu.com` 对不存在的版本返回 HTTP 200，正文只有 `404: Not Found`，
+> 所以 `onload` 不能作为成功信号，只有「全局真的出现了」才算。
+> 现在的方案是**本地优先 + 兜底竞速 + 首写者锁定**：随仓库发布的副本覆盖绝大多数情况（0.4 秒，零网络），
+> 竞速只在该副本缺席时启动，而带守卫的 setter 保证任何一个镜像都只能成为那个唯一的全局。
 
 ---
 
 ## 八、已知限制
 
 * 数据全部在内存中处理，建议量级在**数十万行以内**；表格视图默认分页渲染，大表可切到虚拟滚动，DOM 规模恒定在一屏；
-* 图表库通过 CDN 加载，首次打开需联网；离线场景可把 `echarts.min.js` 下载到本地并修改 `js/charts.js` 中的 `CDNS` 数组；
+* 图表库已内置在仓库里，**无需联网即可使用全部图表**；
 * `date` 类型识别基于常见日期格式，非常规格式会退化为字符串；
 * 分享链接只能还原**内置数据集**上的操作；上传/粘贴的数据不会被编码进 URL（那等于把数据塞进地址栏），打开这类链接时会回落到默认数据集并给出提示；
 * 假设检验面向探索性分析：卡方检验在最小期望频数 < 5 时会在界面上给出警告，但不做 Yates 连续性校正。
@@ -277,5 +290,6 @@ A **pure front-end**, **bilingual (zh/en)** visual analytics workbench that mirr
 * **Built for big frames** — parsing runs in a Web Worker with a synchronous fallback, and the table has a virtual-scroll mode where 50k rows cost the same DOM as 40.
 * **Accessible by default** — tab/panel semantics, `aria-sort` headers, keyboard sorting, a polite live region for toasts, and a colour-blind safe (Okabe–Ito) palette.
 * **Zero dependencies to build** — native ES modules, a hand-written DataFrame engine and CSV parser, statistics matched to pandas/numpy (`ddof=1`, linear-interpolation quantiles, pairwise-complete correlation).
+* **No network on the critical path** — ECharts 5.5.1 ships in the repo, so every chart renders offline in about 0.4 s. Four CDN mirrors exist as a fallback, raced against each other and locked to whichever one wins first; they are only ever requested if the bundled copy is missing.
 * **Designed, not just styled** — token-driven light/dark themes, responsive layout, keyboard shortcuts, and full `prefers-reduced-motion` support.
 * **Your data never leaves the browser.**

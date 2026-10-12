@@ -865,6 +865,13 @@ function renderColumnControls() {
     for (const c of numCols) numSel.appendChild(el('option', { value: c, text: c }));
     const keep = nPrev.filter((c) => numCols.includes(c));
     if (keep.length) [...numSel.options].forEach((o) => { o.selected = keep.includes(o.value); });
+    else {
+      /* The multivariate charts fall back to the highest-ranked measures when
+         the picker is empty. Select them here too, so the control stops
+         claiming "nothing chosen" while six dimensions are on the chart. */
+      const def = rankedNumeric(df).slice(0, 4);
+      [...numSel.options].forEach((o) => { o.selected = def.includes(o.value); });
+    }
   }
 
   const gbCol = $('#gbCol');
@@ -1173,7 +1180,7 @@ function renderValueCounts() {
     </tr>`).join('');
   host.innerHTML = `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 
-  if (!state.echartsReady) return;
+  if (!state.echartsReady) { chartPending($('#vcChart')); return; }
   const top = rows.slice(0, 12).slice().reverse();
   CH.renderChart($('#vcChart'), CH.horizontalBarOption(top.map((r) => r.value), top.map((r) => r.count), {
     xName: t('stats.freq'),
@@ -1182,6 +1189,17 @@ function renderValueCounts() {
 }
 
 /* --------------------- missingness matrix + tests ------------------------ */
+
+/**
+ * ECharts is a CDN download over an unknown network. Every chart surface has
+ * to cope with "not here yet" — and the honest answer is to say so. Returning
+ * early and leaving the box empty looks exactly like a dataset that failed to
+ * load, which is how this placeholder came to exist.
+ */
+function chartPending(host, key = 'chart.loading') {
+  if (!host) return;
+  host.innerHTML = `<p class="muted-note chart-pending">${esc(t(key))}</p>`;
+}
 
 function missingChartLabels() {
   return {
@@ -1196,18 +1214,32 @@ function missingChartLabels() {
 function renderMissingChart() {
   const host = $('#missChart');
   const df = state.view;
-  if (!host || !df || !state.echartsReady) return;
+  if (!host || !df) return;
+  if (!state.echartsReady) { chartPending(host); return; }
   const matrix = missingMatrix(df, 180, 20);
+  const sub = $('#missChartSub');
+
   if (!matrix.cols.length) {
     CH.clearChart(host);
     host.innerHTML = `<p class="muted-note" style="padding:16px">${esc(t('stats.noMissing'))}</p>`;
+    if (sub) sub.textContent = t('stats.missingMapSub');
     return;
   }
+
+  /* The sample ratio belongs in the card subtitle, not parked on the y axis:
+     there it sat on the same line as the column labels and read like a date
+     ("行 (1/26)" rendered beside "discount 62%"), which is exactly how a
+     reader ends up believing the chart has a column that does not exist. */
+  if (sub) {
+    sub.textContent = matrix.step > 1
+      ? `${t('stats.missingMapSub')} · ${t('miss.sampled', { n: matrix.step, rows: matrix.sampled })}`
+      : t('stats.missingMapSub');
+  }
+
   CH.clearChart(host);
   CH.renderChart(host, CH.missingnessOption({
     matrix,
     labels: missingChartLabels(),
-    sampledNote: matrix.step > 1 ? ` (1/${matrix.step})` : '',
   }, CH.chartTheme()));
 }
 
@@ -1740,6 +1772,10 @@ function renderCharts() {
 
   state.chartModel = null;
 
+  /* The library may still be downloading. A blank box reads as "your data is
+     broken", so say what is actually happening instead. */
+  if (!state.echartsReady) { chartPending(stage); return; }
+
   /* chart types that read a multi-column numeric selection instead of X/Y */
   const NO_XY = ['heat', 'missing', 'parallel', 'splom'];
 
@@ -1854,7 +1890,12 @@ function renderCharts() {
         }
         state.chartModel = { type: 'parallel' };
         titleEl.textContent = t('chart.parallelTitle', { n: chosen.length });
-        subEl.textContent = `parallel_coordinates(df, ${py(sCol || chosen[0])})`;
+        /* Name everything the call determines. pandas' second positional
+           argument is `class_column`, not the list of axes: printing only that
+           beside a title saying "2 dimensions" reads as if one column were
+           being plotted. The generated code below is the same call verbatim. */
+        const classCol = sCol || chosen[0];
+        subEl.textContent = `parallel_coordinates(df, ${py(classCol)}, cols=${pyList(chosen)})`;
         paint(CH.parallelOption({ dims, groups }, {
           smooth: $('#chSmooth').checked, opacity: 0.42,
         }, CH.chartTheme()));
@@ -2091,6 +2132,8 @@ function chartPlaceholder(msg) {
  *  and a cache would leak the previous chart type's subtitle across switches. */
 function sub2(subEl, n) {
   subEl.textContent = `${subEl.textContent} · ${t('chart.rows', { n })}`;
+  /* the subtitle is clipped to one line in CSS, so keep the whole call reachable */
+  subEl.title = subEl.textContent;
 }
 const medianOf = (arr) => quantile(arr, 0.5);
 
@@ -2540,17 +2583,29 @@ async function init() {
     toast(t('share.noData'), 'info');
   }
 
-  // warm the chart library, then paint every chart
-  try {
-    await CH.loadECharts();
+  /* The chart library is a CDN download, and nothing else on the page waits on
+     it — the table, the summary, the tests and the pandas code are all usable
+     immediately. So start the download in the background instead of holding the
+     whole app on it: `refreshAll` above has already drawn the placeholders, and
+     the charts paint for real the moment the library lands. */
+  CH.loadECharts().then(() => {
     state.echartsReady = true;
-    renderChartTypes();
     renderValueCounts();
     renderMissingChart();
     renderCharts();
-  } catch {
+  });
+
+  /* The loader never gives up, so the two milestones are reported on our own
+     clock: a nudge while the library is still coming, and a plain failure
+     message if it never arrives. Both are no-ops in practice — the bundled copy
+     lands in milliseconds — but a deployment that forgot to ship it would
+     otherwise leave the user staring at "loading" forever. */
+  setTimeout(() => { if (!state.echartsReady) toast(t('chart.libSlow'), 'info'); }, 15000);
+  setTimeout(() => {
+    if (state.echartsReady) return;
     toast(t('chart.libMissing'), 'err');
-  }
+    for (const sel of ['#mainChart', '#missChart', '#vcChart']) chartPending($(sel), 'chart.libMissing');
+  }, 45000);
 
   syncUrl();
 }

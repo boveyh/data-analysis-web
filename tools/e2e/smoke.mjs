@@ -98,6 +98,11 @@ const shot = async (name) => {
 
 const evalPage = (fn, ...args) => page.evaluate(fn, ...args);
 
+/* The chart library loads in the background (it used to block boot), so after a
+ * navigation nothing may assume `window.echarts` already exists. */
+const waitForLib = (timeout = 20000) =>
+  page.waitForFunction('!!window.echarts', { timeout });
+
 /** Wait until the app has painted a given number of table rows. */
 async function waitForRows(expected, timeout = 20000) {
   await page.waitForFunction(
@@ -144,10 +149,32 @@ async function tab(name, wait = 420) {
 
 /* -------------------------------- 1. load -------------------------------- */
 
+/* Time the chart library from the first byte of the document.
+ *
+ * This guards a specific regression: the CDN chain used to advance only on
+ * `onerror`, so a mirror that was throttled rather than dead held every chart
+ * on the page hostage while healthy mirrors sat untried. Racing the mirrors
+ * means the winner lands in seconds; the assertion below fails loudly if that
+ * ever regresses to "first mirror wins or nothing does". */
+await page.evaluateOnNewDocument(() => {
+  const t0 = performance.now();
+  const iv = setInterval(() => {
+    if (window.echarts) {
+      window.__libMs = Math.round(performance.now() - t0);
+      clearInterval(iv);
+    }
+  }, 40);
+  setTimeout(() => clearInterval(iv), 40000);
+});
+
 group('1 · boot & dataset catalogue');
-await page.goto(`${origin}/index.html`, { waitUntil: 'networkidle2', timeout: 60000 });
+/* `networkidle2` is the wrong wait here: the CDN race keeps requests in flight
+   for as long as the slowest mirror takes, so "network idle" arrives far later
+   than "app ready". The selector wait below is the real readiness signal. */
+await page.goto(`${origin}/index.html`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForSelector('#sampleList .sample-item', { timeout: 20000 });
 await sleep(1200);
+await waitForLib();
 
 let st = await readState();
 check('default dataset is sales.csv', st.headerName === 'sales.csv', st.headerName);
@@ -254,11 +281,29 @@ check('titanic loaded', st.headerName === 'titanic.csv', st.headerName);
 check('titanic has missing values', st.na !== '0' && st.na !== '—', st.na);
 
 await tab('stats', 900);
-const miss = await evalPage(() => ({
-  canvas: document.querySelectorAll('#missChart canvas').length,
-  note: document.querySelector('#missChart .muted-note')?.textContent || '',
-}));
+const miss = await evalPage(() => {
+  const host = document.querySelector('#missChart');
+  const c = host.querySelector('canvas');
+  const inst = window.echarts.getInstanceByDom(host);
+  return {
+    canvas: host.querySelectorAll('canvas').length,
+    size: c ? `${c.width}x${c.height}` : '',
+    sub: document.querySelector('#missChartSub')?.textContent || '',
+    axisName: inst ? (inst.getOption().yAxis[0].name || '') : '(none)',
+    note: host.querySelector('.muted-note')?.textContent || '',
+  };
+});
 check('missingness matrix is drawn', miss.canvas > 0, miss.note);
+/* ECharts will happily create a 0x0 canvas inside a container that had no size
+   at init time — "a canvas exists" is not the same as "something was drawn" */
+check('the missingness canvas has real dimensions',
+  /^(\d+)x(\d+)$/.test(miss.size)
+  && Number(miss.size.split('x')[0]) > 10 && Number(miss.size.split('x')[1]) > 10,
+  miss.size || '(none)');
+/* The sample ratio used to ride on the y-axis name, where it landed inline with
+   the column labels and read as a date — so it moved to the card subtitle. */
+check('the sample ratio is stated in the subtitle', /抽样|Sampled/.test(miss.sub), miss.sub);
+check('nothing stray is left on the missingness y axis', miss.axisName === '', miss.axisName);
 
 const tests = await evalPage(() => {
   const rows = [...document.querySelectorAll('#testTable tbody tr')];
@@ -347,18 +392,21 @@ check('URL carries the recipe', /#s=/.test(filtered.hash), filtered.hash.slice(0
 
 const rowsBefore = Number(filtered.rows.replace(/[^\d]/g, ''));
 const restored = `${origin}${filtered.hash}`;
-await page.goto(restored, { waitUntil: 'networkidle2', timeout: 60000 });
+await page.goto(restored, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForSelector('#sampleList .sample-item', { timeout: 20000 });
 await sleep(1600);
+/* Read the toast before waiting on the chart library — toasts are transient and
+   the library race can take a while on a slow link. */
+const toastText = await evalPage(() => [...document.querySelectorAll('#toastStack .toast')]
+  .map((t) => t.textContent).join(' | '));
 const after = await readState();
 check('reload restores the dataset', after.headerName === 'sales.csv', after.headerName);
 check('reload restores the query text',
   (await evalPage(() => document.querySelector('#queryInput').value)) === 'revenue > 2000');
 check('reload restores the row count', Number(after.rows.replace(/[^\d]/g, '')) === rowsBefore,
   `${after.rows} vs ${filtered.rows}`);
-const toastText = await evalPage(() => [...document.querySelectorAll('#toastStack .toast')]
-  .map((t) => t.textContent).join(' | '));
 check('a link-restore toast is shown', toastText.length > 0, toastText);
+await waitForLib();
 await shot('04-share-restore');
 
 /* an uploaded file must never be encoded into the URL — a share link carries
@@ -465,6 +513,22 @@ await page.click('.chart-type[data-type="parallel"]');
 await sleep(1000);
 check('subtitle names the parallel-coordinates call',
   (await evalPage(() => document.querySelector('#chartSub').textContent)).includes('parallel_coordinates'));
+
+/* The picker and the plot have to agree. They did not look like they did: the
+   subtitle printed pandas' single `class_column` argument while the title said
+   "2 dimensions", so the chart appeared to contradict its own caption. */
+const parallelAgree = await evalPage(() => {
+  const selected = [...document.querySelector('#chNumCols').selectedOptions].map((o) => o.value);
+  const inst = window.echarts.getInstanceByDom(document.querySelector('#mainChart'));
+  const axes = (inst.getOption().parallelAxis || []).map((a) => a.name).filter(Boolean);
+  return { selected, axes, sub: document.querySelector('#chartSub').textContent };
+});
+check('every plotted axis was actually selected in the picker',
+  parallelAgree.axes.length > 0
+  && parallelAgree.axes.every((a) => parallelAgree.selected.includes(a)),
+  `${JSON.stringify(parallelAgree.axes)} vs picker ${JSON.stringify(parallelAgree.selected)}`);
+check('the parallel subtitle names the axis list, not just the class column',
+  /cols=/.test(parallelAgree.sub), parallelAgree.sub);
 
 /* the scatter matrix draws its tick labels outside the grids, so the grids must
  * stop short of the canvas edges or the bottom row gets clipped away */
@@ -740,9 +804,63 @@ check('the share hash carries the recipe, never the 900 rows',
   upHash.startsWith('#s=') && upHash.length < 900, `hash is ${upHash.length} chars`);
 fs.unlinkSync(tmpCsv);
 
+/* ------------------------ 15. chart library delivery --------------------- */
+
+group('15 · chart library delivery');
+const lib = await evalPage(() => ({ ms: window.__libMs ?? null, hasLib: !!window.echarts }));
+check('ECharts arrives from the bundled copy', lib.hasLib);
+/* The bundled copy takes the network off the critical path entirely */
+check('the bundled copy is used, with no CDN round trip in the way',
+  typeof lib.ms === 'number' && lib.ms > 0 && lib.ms < 5000, `resolved in ${lib.ms} ms`);
+
+/* Deterministic replay of the failure modes this section exists for.
+ *
+ * Stalling the *bundled* copy reproduces both at once. The hung request never
+ * fires `onload` or `onerror`, so the local timeout is the only thing that can
+ * advance things — and the mirrors that then race each other execute in
+ * download-completion order, which is what used to swap the ECharts instance
+ * registry out from under charts that had already been drawn. */
+const stallPage = await browser.newPage();
+await stallPage.setRequestInterception(true);
+stallPage.on('request', (req) => {
+  // never resolve this one: a hung request is indistinguishable from a slow disk
+  if (/vendor\/echarts/.test(req.url())) return;
+  req.continue().catch(() => {});
+});
+await stallPage.evaluateOnNewDocument(() => {
+  window.__t0 = performance.now();
+  const iv = setInterval(() => {
+    if (window.echarts) { window.__libMs = Math.round(performance.now() - window.__t0); clearInterval(iv); }
+  }, 40);
+  setTimeout(() => clearInterval(iv), 40000);
+});
+await stallPage.goto(`${origin}/index.html`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+const stalled = await stallPage.waitForFunction('!!window.echarts', { timeout: 40000 })
+  .then(() => stallPage.evaluate(() => ({ ms: window.__libMs, ver: window.echarts.version })))
+  .catch(() => null);
+check('a stalled bundled copy still falls back to the mirrors',
+  stalled && stalled.ms > 2500 && stalled.ms < 40000,
+  stalled ? `${stalled.ms} ms, won by ECharts ${stalled.ver}` : 'library never arrived');
+
+/* The subtle half: a loser that was already executing would reassign
+   `window.echarts`, swapping the registry out from under charts created against
+   the winner. A canvas that exists but is unknown to `getInstanceByDom` is
+   exactly that failure. */
+const stalledAttached = await stallPage.waitForFunction(
+  `(() => {
+     const el = document.querySelector('#mainChart');
+     return !!(el && el.querySelector('canvas') && window.echarts.getInstanceByDom(el));
+   })()`,
+  { timeout: 20000 },
+).then(() => true).catch(() => false);
+check('charts stay attached to the winning registry', stalledAttached);
+await stallPage.close();
+
 /* ------------------------------ teardown -------------------------------- */
 
-group('15 · console hygiene');
+group('16 · console hygiene');
+/* The bundled ECharts means no third-party request is issued at all in the
+   normal case, so this check is deliberately strict again. */
 const relevant = consoleErrors.filter((e) => !/favicon/i.test(e));
 check('no console or page errors', relevant.length === 0, relevant.slice(0, 4).join(' || '));
 check('no failed same-origin requests', requestFailures.length === 0, requestFailures.slice(0, 3).join(' || '));

@@ -366,6 +366,10 @@ code, pre { font-family: var(--font-mono); }
 .card-head.mt { margin-top: 18px; }
 .card-head h2 { font-size: 14px; font-weight: 650; letter-spacing: -.005em; }
 .card-sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+/* A chart subtitle carries a full pandas call — parallel_coordinates with four
+   axes runs long enough to wrap and shove the chart down the page. Keep it to
+   one line; sub2() mirrors the full text into `title` so nothing is lost. */
+#chartSub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .muted { color: var(--text-3); font-weight: 400; font-size: 12px; }
 
@@ -581,6 +585,8 @@ textarea.code-input {
 .chart-box { width: 100%; min-height: 380px; }
 .chart-box.tall { min-height: 480px; }
 .chart-stage { display: flex; flex-direction: column; }
+/* shown while the ECharts bundle is still coming down the wire */
+.chart-pending { padding: 28px 16px; text-align: center; }
 
 /* ------------------------------ code view -------------------------------- */
 .code-block {
