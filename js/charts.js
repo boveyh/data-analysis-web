@@ -1,37 +1,121 @@
 /* =============================================================================
  * charts.js — ECharts renderers, one per chart type.
- * The library is fetched from a short CDN fallback chain so a single outage
- * never breaks the page.
+ *
+ * ECharts ships with the repo (js/vendor/echarts.min.js) and is loaded from
+ * disk first. The mirrors below are a fallback for a deployment that forgot to
+ * copy that file. See loadECharts for why a naive fallback chain was not enough.
  * ========================================================================== */
 
+/* The copy that travels with the repo, resolved against the document. */
+const LOCAL = 'js/vendor/echarts.min.js';
+
+/* Fallback mirrors.
+ *
+ * Note the pinned versions: bootcdn has no 5.5.1 (a 404), so it is pinned to
+ * 5.5.0. The API surface used here is identical across those two releases.
+ */
 const CDNS = [
   'https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js',
   'https://unpkg.com/echarts@5.5.1/dist/echarts.min.js',
-  'https://cdn.bootcdn.net/ajax/libs/echarts/5.5.1/echarts.min.js',
-  'https://lib.baomitu.com/echarts/5.5.1/echarts.min.js',
+  'https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js',
 ];
 
+/** No deadline. See the note in loadECharts for why. */
 let libPromise = null;
 
-/** Resolve window.echarts, trying each CDN in turn. */
+/** Resolve `window.echarts` from the bundled copy, or a mirror as a fallback. */
 export function loadECharts() {
   if (window.echarts) return Promise.resolve(window.echarts);
   if (libPromise) return libPromise;
 
-  libPromise = new Promise((resolve, reject) => {
-    let i = 0;
-    const attempt = () => {
-      if (i >= CDNS.length) { reject(new Error('echarts-unavailable')); return; }
-      const src = CDNS[i++];
-      const s = document.createElement('script');
-      s.src = src;
-      s.async = true;
-      s.onload = () => (window.echarts ? resolve(window.echarts) : attempt());
-      s.onerror = attempt;
-      document.head.appendChild(s);
+  libPromise = new Promise((resolve) => {
+    let settled = false;
+    let poll = null;
+    let lib = null;
+    const tags = [];
+
+    /* First writer wins; every later writer is ignored, silently.
+     *
+     * The mirrors go in as <script> tags, so they execute in whatever order
+     * their downloads finish. Detaching the losers in `win()` aborts the ones
+     * still in flight, but a loser that has already entered the execution queue
+     * runs to completion — and its UMD wrapper does `window.echarts = {}` all
+     * over again, swapping the instance registry out from under charts that
+     * were already created against the winner. That is what made
+     * `getInstanceByDom` return undefined for a canvas that visibly existed.
+     *
+     * An accessor with a guarded setter makes the late assignment a no-op. The
+     * loser's `factory(newObject)` still runs and still receives a fresh object
+     * — it just never becomes the global, so nothing observable changes. */
+    try {
+      Object.defineProperty(window, 'echarts', {
+        configurable: true,
+        get: () => lib,
+        set: (v) => { if (!lib) lib = v; },
+      });
+    } catch { /* an exotic host may refuse; the rest of the chain still helps */ }
+
+    const win = () => {
+      if (settled || !lib) return;
+      settled = true;
+      if (poll) clearInterval(poll);
+      /* detaching a <script> mid-flight aborts its download in every engine
+         that matters, so the losing mirrors stop costing bandwidth */
+      for (const tag of tags) tag.remove();
+      resolve(lib);
     };
-    attempt();
+
+    /** Phase two — only reached if the bundled copy produced nothing. */
+    let racing = false;
+    const raceMirrors = () => {
+      if (racing) return;
+      racing = true;
+      /* `onload` fires even for a mirror that served an error page — as
+         lib.baomitu.com did, returning the literal text "404: Not Found" with a
+         200 status. So the only trustworthy signal is whether a global actually
+         appeared, which the guarded setter above has already decided.
+         Mirrors are raced rather than queued: a mirror that is throttled rather
+         than dead never errors, and on the machine this was written on
+         jsDelivr delivered 96 KB of the bundle in 25 s. Sequential fallback
+         would wait on it indefinitely while healthy mirrors sat untried. */
+      for (const src of CDNS) {
+        const tag = document.createElement('script');
+        tag.src = src;
+        tag.async = true;
+        tag.onload = () => win();
+        tag.onerror = () => {};
+        tags.push(tag);
+        document.head.appendChild(tag);
+      }
+      /* Belt and braces for the global appearing without an event we can see. */
+      poll = setInterval(() => win(), 200);
+    };
+
+    /* Phase one — the bundled copy.
+     *
+     * Loading it from disk removes the network from the critical path
+     * entirely, and with it every failure mode this file has had to defend
+     * against: a throttled mirror taking 17 s, a 404 dressed up as HTTP 200, a
+     * captive portal rewriting responses. Measured here, the local copy
+     * resolves in milliseconds against 3.4–17 s for the same bytes over the
+     * wire. The trade is ~1 MB in the repo, which is nothing for a static site
+     * and buys an instant, offline-capable first paint. */
+    const local = document.createElement('script');
+    local.src = LOCAL;
+    local.async = false;
+    local.onload = () => { if (lib) win(); else raceMirrors(); };
+    local.onerror = () => raceMirrors();
+    tags.push(local);
+    document.head.appendChild(local);
+
+    /* A file that hangs is not a file that failed: without this the URL would
+       have to be reset or the request killed before anything fired, and the
+       loader would wait forever on its own bundled asset. Cheap to guard,
+       since the local copy normally lands in milliseconds. */
+    setTimeout(() => { if (!settled && !lib) raceMirrors(); }, 3000);
   });
+
   return libPromise;
 }
 
@@ -459,9 +543,6 @@ export function missingnessOption(model, t = theme()) {
       splitLine: { show: false },
       axisTick: { show: false },
       axisLabel: { show: false },
-      name: `${model.labels.rows}${model.sampledNote || ''}`,
-      nameTextStyle: { color: t.text3, fontFamily: t.font, fontSize: 10, padding: [0, 0, 0, 0] },
-      nameGap: 8,
     },
     visualMap: {
       type: 'piecewise',
