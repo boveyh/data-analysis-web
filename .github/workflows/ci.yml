@@ -31,6 +31,15 @@ jobs:
       - name: Selector / translation / CSS wiring audit
         run: node tools/deps-audit.mjs
 
+      - name: Excel read/write round-trip
+        run: node tools/xlsx-test.mjs
+
+      - name: Agreement with real pandas (frozen golden values)
+        run: node tools/parity-test.mjs
+
+      - name: Engine benchmark (algorithmic-regression gate)
+        run: node tools/bench.mjs --check
+
       - name: Syntax-check every module
         run: |
           for f in js/*.js tools/*.mjs tools/e2e/*.mjs; do

@@ -1,0 +1,221 @@
+{
+ "columns": [
+  "total_bill",
+  "tip",
+  "sex",
+  "smoker",
+  "day",
+  "time",
+  "size"
+ ],
+ "corr": {
+  "columns": [
+   "total_bill",
+   "tip",
+   "size"
+  ],
+  "matrix": [
+   [
+    1.0,
+    0.6757341092,
+    0.5983151309
+   ],
+   [
+    0.6757341092,
+    1.0,
+    0.4892987752
+   ],
+   [
+    0.5983151309,
+    0.4892987752,
+    1.0
+   ]
+  ]
+ },
+ "crosstab": {
+  "cols": [
+   "No",
+   "Yes"
+  ],
+  "grid": [
+   [
+    54,
+    33
+   ],
+   [
+    97,
+    60
+   ]
+  ],
+  "rows": [
+   "Female",
+   "Male"
+  ]
+ },
+ "dataset": "tips",
+ "describe": {
+  "size": {
+   "count": 244.0,
+   "max": 6.0,
+   "mean": 2.5696721311,
+   "min": 1.0,
+   "q25": 2.0,
+   "q50": 2.0,
+   "q75": 3.0,
+   "std": 0.9510998047
+  },
+  "tip": {
+   "count": 244.0,
+   "max": 10.0,
+   "mean": 2.9982786885,
+   "min": 1.0,
+   "q25": 2.0,
+   "q50": 2.9,
+   "q75": 3.5625,
+   "std": 1.383638189
+  },
+  "total_bill": {
+   "count": 244.0,
+   "max": 50.81,
+   "mean": 19.785942623,
+   "min": 3.07,
+   "q25": 13.3475,
+   "q50": 17.795,
+   "q75": 24.1275,
+   "std": 8.9024119549
+  }
+ },
+ "dtypes": {
+  "day": "string",
+  "sex": "string",
+  "size": "number",
+  "smoker": "string",
+  "time": "string",
+  "tip": "number",
+  "total_bill": "number"
+ },
+ "groupby": {
+  "by": "sex",
+  "count": {
+   "Female": 87,
+   "Male": 157
+  },
+  "max": {
+   "Female": 44.3,
+   "Male": 50.81
+  },
+  "mean": {
+   "Female": 18.0568965517,
+   "Male": 20.7440764331
+  },
+  "median": {
+   "Female": 16.4,
+   "Male": 18.35
+  },
+  "min": {
+   "Female": 3.07,
+   "Male": 7.25
+  },
+  "sum": {
+   "Female": 1570.95,
+   "Male": 3256.82
+  },
+  "value": "total_bill"
+ },
+ "missing": {
+  "day": 0,
+  "sex": 0,
+  "size": 0,
+  "smoker": 0,
+  "time": 0,
+  "tip": 0,
+  "total_bill": 0
+ },
+ "numericColumns": [
+  "total_bill",
+  "tip",
+  "size"
+ ],
+ "numpy": "2.5.4",
+ "nunique": {
+  "day": 4,
+  "sex": 2,
+  "size": 6,
+  "smoker": 2,
+  "time": 2,
+  "tip": 123,
+  "total_bill": 229
+ },
+ "pandas": "3.0.6",
+ "quantiles": {
+  "size": {
+   "0.1": 2.0,
+   "0.333": 2.0,
+   "0.9": 4.0
+  },
+  "tip": {
+   "0.1": 1.5,
+   "0.333": 2.02919,
+   "0.9": 5.0
+  },
+  "total_bill": {
+   "0.1": 10.34,
+   "0.333": 15.03757,
+   "0.9": 32.235
+  }
+ },
+ "shape": [
+  244,
+  7
+ ],
+ "sortDescFirst5": [
+  50.81,
+  48.33,
+  48.27,
+  48.17,
+  45.35
+ ],
+ "sortDescLast5": [
+  7.51,
+  7.25,
+  7.25,
+  5.75,
+  3.07
+ ],
+ "valueCounts": {
+  "day": {
+   "distinct": 4,
+   "top": {
+    "Fri": 19,
+    "Sat": 87,
+    "Sun": 76,
+    "Thur": 62
+   },
+   "truncated": false
+  },
+  "sex": {
+   "distinct": 2,
+   "top": {
+    "Female": 87,
+    "Male": 157
+   },
+   "truncated": false
+  },
+  "smoker": {
+   "distinct": 2,
+   "top": {
+    "No": 151,
+    "Yes": 93
+   },
+   "truncated": false
+  },
+  "time": {
+   "distinct": 2,
+   "top": {
+    "Dinner": 176,
+    "Lunch": 68
+   },
+   "truncated": false
+  }
+ }
+}

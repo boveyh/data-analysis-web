@@ -1,0 +1,336 @@
+{
+ "columns": [
+  "pickup",
+  "dropoff",
+  "passengers",
+  "distance",
+  "fare",
+  "tip",
+  "tolls",
+  "total",
+  "color",
+  "payment",
+  "pickup_zone",
+  "dropoff_zone",
+  "pickup_borough",
+  "dropoff_borough"
+ ],
+ "corr": {
+  "columns": [
+   "passengers",
+   "distance",
+   "fare",
+   "tip",
+   "tolls",
+   "total"
+  ],
+  "matrix": [
+   [
+    1.0,
+    0.0094111038,
+    0.0076370562,
+    0.0210993015,
+    -0.0029030547,
+    0.0157078493
+   ],
+   [
+    0.0094111038,
+    1.0,
+    0.9201077028,
+    0.4525886565,
+    0.635267382,
+    0.9046764192
+   ],
+   [
+    0.0076370562,
+    0.9201077028,
+    1.0,
+    0.4886124005,
+    0.6093069207,
+    0.974357641
+   ],
+   [
+    0.0210993015,
+    0.4525886565,
+    0.4886124005,
+    1.0,
+    0.4136187979,
+    0.646185792
+   ],
+   [
+    -0.0029030547,
+    0.635267382,
+    0.6093069207,
+    0.4136187979,
+    1.0,
+    0.6831422197
+   ],
+   [
+    0.0157078493,
+    0.9046764192,
+    0.974357641,
+    0.646185792,
+    0.6831422197,
+    1.0
+   ]
+  ]
+ },
+ "crosstab": {
+  "cols": [
+   "cash",
+   "credit card"
+  ],
+  "grid": [
+   [
+    400,
+    577
+   ],
+   [
+    1412,
+    4000
+   ]
+  ],
+  "rows": [
+   "green",
+   "yellow"
+  ]
+ },
+ "dataset": "taxis",
+ "describe": {
+  "distance": {
+   "count": 6433.0,
+   "max": 36.7,
+   "mean": 3.0246168195,
+   "min": 0.0,
+   "q25": 0.98,
+   "q50": 1.64,
+   "q75": 3.21,
+   "std": 3.827867001
+  },
+  "fare": {
+   "count": 6433.0,
+   "max": 150.0,
+   "mean": 13.0910725944,
+   "min": 1.0,
+   "q25": 6.5,
+   "q50": 9.5,
+   "q75": 15.0,
+   "std": 11.5518042664
+  },
+  "passengers": {
+   "count": 6433.0,
+   "max": 6.0,
+   "mean": 1.5392507384,
+   "min": 0.0,
+   "q25": 1.0,
+   "q50": 1.0,
+   "q75": 2.0,
+   "std": 1.2037681295
+  },
+  "tip": {
+   "count": 6433.0,
+   "max": 33.2,
+   "mean": 1.9792196487,
+   "min": 0.0,
+   "q25": 0.0,
+   "q50": 1.7,
+   "q75": 2.8,
+   "std": 2.4485595916
+  },
+  "tolls": {
+   "count": 6433.0,
+   "max": 24.02,
+   "mean": 0.3252728121,
+   "min": 0.0,
+   "q25": 0.0,
+   "q50": 0.0,
+   "q75": 0.0,
+   "std": 1.4152673298
+  },
+  "total": {
+   "count": 6433.0,
+   "max": 174.82,
+   "mean": 18.5177941862,
+   "min": 1.3,
+   "q25": 10.8,
+   "q50": 14.16,
+   "q75": 20.3,
+   "std": 13.8155700411
+  }
+ },
+ "dtypes": {
+  "color": "string",
+  "distance": "number",
+  "dropoff": "string",
+  "dropoff_borough": "string",
+  "dropoff_zone": "string",
+  "fare": "number",
+  "passengers": "number",
+  "payment": "string",
+  "pickup": "string",
+  "pickup_borough": "string",
+  "pickup_zone": "string",
+  "tip": "number",
+  "tolls": "number",
+  "total": "number"
+ },
+ "groupby": {
+  "by": "color",
+  "count": {
+   "green": 982,
+   "yellow": 5451
+  },
+  "max": {
+   "green": 6,
+   "yellow": 6
+  },
+  "mean": {
+   "green": 1.2484725051,
+   "yellow": 1.5916345625
+  },
+  "median": {
+   "green": 1.0,
+   "yellow": 1.0
+  },
+  "min": {
+   "green": 0,
+   "yellow": 0
+  },
+  "sum": {
+   "green": 1226,
+   "yellow": 8676
+  },
+  "value": "passengers"
+ },
+ "missing": {
+  "color": 0,
+  "distance": 0,
+  "dropoff": 0,
+  "dropoff_borough": 45,
+  "dropoff_zone": 45,
+  "fare": 0,
+  "passengers": 0,
+  "payment": 44,
+  "pickup": 0,
+  "pickup_borough": 26,
+  "pickup_zone": 26,
+  "tip": 0,
+  "tolls": 0,
+  "total": 0
+ },
+ "numericColumns": [
+  "passengers",
+  "distance",
+  "fare",
+  "tip",
+  "tolls",
+  "total"
+ ],
+ "numpy": "2.5.4",
+ "nunique": {
+  "color": 2,
+  "distance": 1079,
+  "dropoff": 6425,
+  "dropoff_borough": 5,
+  "dropoff_zone": 203,
+  "fare": 220,
+  "passengers": 7,
+  "payment": 2,
+  "pickup": 6414,
+  "pickup_borough": 4,
+  "pickup_zone": 194,
+  "tip": 489,
+  "tolls": 16,
+  "total": 898
+ },
+ "pandas": "3.0.6",
+ "quantiles": {
+  "distance": {
+   "0.1": 0.61,
+   "0.333": 1.17,
+   "0.9": 7.26
+  },
+  "fare": {
+   "0.1": 5.0,
+   "0.333": 7.5,
+   "0.9": 26.0
+  },
+  "passengers": {
+   "0.1": 1.0,
+   "0.333": 1.0,
+   "0.9": 3.0
+  },
+  "tip": {
+   "0.1": 0.0,
+   "0.333": 0.0,
+   "0.9": 4.45
+  },
+  "tolls": {
+   "0.1": 0.0,
+   "0.333": 0.0,
+   "0.9": 0.0
+  },
+  "total": {
+   "0.1": 8.768,
+   "0.333": 11.8,
+   "0.9": 33.36
+  }
+ },
+ "shape": [
+  6433,
+  14
+ ],
+ "sortDescFirst5": [
+  6,
+  6,
+  6,
+  6,
+  6
+ ],
+ "sortDescLast5": [
+  0,
+  0,
+  0,
+  0,
+  0
+ ],
+ "valueCounts": {
+  "color": {
+   "distinct": 2,
+   "top": {
+    "green": 982,
+    "yellow": 5451
+   },
+   "truncated": false
+  },
+  "dropoff_borough": {
+   "distinct": 5,
+   "top": {
+    "Bronx": 137,
+    "Brooklyn": 501,
+    "Manhattan": 5206,
+    "Queens": 542,
+    "Staten Island": 2
+   },
+   "truncated": false
+  },
+  "payment": {
+   "distinct": 2,
+   "top": {
+    "cash": 1812,
+    "credit card": 4577
+   },
+   "truncated": false
+  },
+  "pickup_borough": {
+   "distinct": 4,
+   "top": {
+    "Bronx": 99,
+    "Brooklyn": 383,
+    "Manhattan": 5268,
+    "Queens": 657
+   },
+   "truncated": false
+  }
+ }
+}

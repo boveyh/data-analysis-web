@@ -1,0 +1,341 @@
+{
+ "columns": [
+  "survived",
+  "pclass",
+  "sex",
+  "age",
+  "sibsp",
+  "parch",
+  "fare",
+  "embarked",
+  "class",
+  "who",
+  "adult_male",
+  "deck",
+  "embark_town",
+  "alive",
+  "alone"
+ ],
+ "corr": {
+  "columns": [
+   "survived",
+   "pclass",
+   "age",
+   "sibsp",
+   "parch",
+   "fare"
+  ],
+  "matrix": [
+   [
+    1.0,
+    -0.338481036,
+    -0.0772210946,
+    -0.0353224989,
+    0.0816294071,
+    0.2573065224
+   ],
+   [
+    -0.338481036,
+    1.0,
+    -0.3692260153,
+    0.0830813628,
+    0.0184426713,
+    -0.5494996199
+   ],
+   [
+    -0.0772210946,
+    -0.3692260153,
+    1.0,
+    -0.3082467589,
+    -0.1891192626,
+    0.0960666918
+   ],
+   [
+    -0.0353224989,
+    0.0830813628,
+    -0.3082467589,
+    1.0,
+    0.4148376986,
+    0.1596510432
+   ],
+   [
+    0.0816294071,
+    0.0184426713,
+    -0.1891192626,
+    0.4148376986,
+    1.0,
+    0.2162249448
+   ],
+   [
+    0.2573065224,
+    -0.5494996199,
+    0.0960666918,
+    0.1596510432,
+    0.2162249448,
+    1.0
+   ]
+  ]
+ },
+ "crosstab": {
+  "cols": [
+   "C",
+   "Q",
+   "S"
+  ],
+  "grid": [
+   [
+    73,
+    36,
+    203
+   ],
+   [
+    95,
+    41,
+    441
+   ]
+  ],
+  "rows": [
+   "female",
+   "male"
+  ]
+ },
+ "dataset": "titanic",
+ "describe": {
+  "age": {
+   "count": 714.0,
+   "max": 80.0,
+   "mean": 29.6991176471,
+   "min": 0.42,
+   "q25": 20.125,
+   "q50": 28.0,
+   "q75": 38.0,
+   "std": 14.5264973323
+  },
+  "fare": {
+   "count": 891.0,
+   "max": 512.3292,
+   "mean": 32.2042079686,
+   "min": 0.0,
+   "q25": 7.9104,
+   "q50": 14.4542,
+   "q75": 31.0,
+   "std": 49.6934285972
+  },
+  "parch": {
+   "count": 891.0,
+   "max": 6.0,
+   "mean": 0.3815937149,
+   "min": 0.0,
+   "q25": 0.0,
+   "q50": 0.0,
+   "q75": 0.0,
+   "std": 0.8060572211
+  },
+  "pclass": {
+   "count": 891.0,
+   "max": 3.0,
+   "mean": 2.3086419753,
+   "min": 1.0,
+   "q25": 2.0,
+   "q50": 3.0,
+   "q75": 3.0,
+   "std": 0.836071241
+  },
+  "sibsp": {
+   "count": 891.0,
+   "max": 8.0,
+   "mean": 0.5230078563,
+   "min": 0.0,
+   "q25": 0.0,
+   "q50": 0.0,
+   "q75": 1.0,
+   "std": 1.1027434323
+  },
+  "survived": {
+   "count": 891.0,
+   "max": 1.0,
+   "mean": 0.3838383838,
+   "min": 0.0,
+   "q25": 0.0,
+   "q50": 0.0,
+   "q75": 1.0,
+   "std": 0.4865924543
+  }
+ },
+ "dtypes": {
+  "adult_male": "boolean",
+  "age": "number",
+  "alive": "string",
+  "alone": "boolean",
+  "class": "string",
+  "deck": "string",
+  "embark_town": "string",
+  "embarked": "string",
+  "fare": "number",
+  "parch": "number",
+  "pclass": "number",
+  "sex": "string",
+  "sibsp": "number",
+  "survived": "number",
+  "who": "string"
+ },
+ "groupby": {
+  "by": "sex",
+  "count": {
+   "female": 314,
+   "male": 577
+  },
+  "max": {
+   "female": 1,
+   "male": 1
+  },
+  "mean": {
+   "female": 0.7420382166,
+   "male": 0.1889081456
+  },
+  "median": {
+   "female": 1.0,
+   "male": 0.0
+  },
+  "min": {
+   "female": 0,
+   "male": 0
+  },
+  "sum": {
+   "female": 233,
+   "male": 109
+  },
+  "value": "survived"
+ },
+ "missing": {
+  "adult_male": 0,
+  "age": 177,
+  "alive": 0,
+  "alone": 0,
+  "class": 0,
+  "deck": 688,
+  "embark_town": 2,
+  "embarked": 2,
+  "fare": 0,
+  "parch": 0,
+  "pclass": 0,
+  "sex": 0,
+  "sibsp": 0,
+  "survived": 0,
+  "who": 0
+ },
+ "numericColumns": [
+  "survived",
+  "pclass",
+  "age",
+  "sibsp",
+  "parch",
+  "fare"
+ ],
+ "numpy": "2.5.4",
+ "nunique": {
+  "adult_male": 2,
+  "age": 88,
+  "alive": 2,
+  "alone": 2,
+  "class": 3,
+  "deck": 7,
+  "embark_town": 3,
+  "embarked": 3,
+  "fare": 248,
+  "parch": 7,
+  "pclass": 3,
+  "sex": 2,
+  "sibsp": 7,
+  "survived": 2,
+  "who": 3
+ },
+ "pandas": "3.0.6",
+ "quantiles": {
+  "age": {
+   "0.1": 14.0,
+   "0.333": 23.0,
+   "0.9": 50.0
+  },
+  "fare": {
+   "0.1": 7.55,
+   "0.333": 8.6625,
+   "0.9": 77.9583
+  },
+  "parch": {
+   "0.1": 0.0,
+   "0.333": 0.0,
+   "0.9": 2.0
+  },
+  "pclass": {
+   "0.1": 1.0,
+   "0.333": 2.0,
+   "0.9": 3.0
+  },
+  "sibsp": {
+   "0.1": 0.0,
+   "0.333": 0.0,
+   "0.9": 1.0
+  },
+  "survived": {
+   "0.1": 0.0,
+   "0.333": 0.0,
+   "0.9": 1.0
+  }
+ },
+ "shape": [
+  891,
+  15
+ ],
+ "sortDescFirst5": [
+  1,
+  1,
+  1,
+  1,
+  1
+ ],
+ "sortDescLast5": [
+  0,
+  0,
+  0,
+  0,
+  0
+ ],
+ "valueCounts": {
+  "class": {
+   "distinct": 3,
+   "top": {
+    "First": 216,
+    "Second": 184,
+    "Third": 491
+   },
+   "truncated": false
+  },
+  "embarked": {
+   "distinct": 3,
+   "top": {
+    "C": 168,
+    "Q": 77,
+    "S": 644
+   },
+   "truncated": false
+  },
+  "sex": {
+   "distinct": 2,
+   "top": {
+    "female": 314,
+    "male": 577
+   },
+   "truncated": false
+  },
+  "who": {
+   "distinct": 3,
+   "top": {
+    "child": 83,
+    "man": 537,
+    "woman": 271
+   },
+   "truncated": false
+  }
+ }
+}

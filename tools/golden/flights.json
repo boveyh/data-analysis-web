@@ -1,0 +1,205 @@
+{
+ "columns": [
+  "year",
+  "month",
+  "passengers"
+ ],
+ "corr": {
+  "columns": [
+   "year",
+   "passengers"
+  ],
+  "matrix": [
+   [
+    1.0,
+    0.9218238353
+   ],
+   [
+    0.9218238353,
+    1.0
+   ]
+  ]
+ },
+ "dataset": "flights",
+ "describe": {
+  "passengers": {
+   "count": 144.0,
+   "max": 622.0,
+   "mean": 280.2986111111,
+   "min": 104.0,
+   "q25": 180.0,
+   "q50": 265.5,
+   "q75": 360.5,
+   "std": 119.9663169429
+  },
+  "year": {
+   "count": 144.0,
+   "max": 1960.0,
+   "mean": 1954.5,
+   "min": 1949.0,
+   "q25": 1951.75,
+   "q50": 1954.5,
+   "q75": 1957.25,
+   "std": 3.4641016151
+  }
+ },
+ "dtypes": {
+  "month": "string",
+  "passengers": "number",
+  "year": "number"
+ },
+ "groupby": {
+  "by": "month",
+  "count": {
+   "April": 12,
+   "August": 12,
+   "December": 12,
+   "February": 12,
+   "January": 12,
+   "July": 12,
+   "June": 12,
+   "March": 12,
+   "May": 12,
+   "November": 12,
+   "October": 12,
+   "September": 12
+  },
+  "max": {
+   "April": 1960,
+   "August": 1960,
+   "December": 1960,
+   "February": 1960,
+   "January": 1960,
+   "July": 1960,
+   "June": 1960,
+   "March": 1960,
+   "May": 1960,
+   "November": 1960,
+   "October": 1960,
+   "September": 1960
+  },
+  "mean": {
+   "April": 1954.5,
+   "August": 1954.5,
+   "December": 1954.5,
+   "February": 1954.5,
+   "January": 1954.5,
+   "July": 1954.5,
+   "June": 1954.5,
+   "March": 1954.5,
+   "May": 1954.5,
+   "November": 1954.5,
+   "October": 1954.5,
+   "September": 1954.5
+  },
+  "median": {
+   "April": 1954.5,
+   "August": 1954.5,
+   "December": 1954.5,
+   "February": 1954.5,
+   "January": 1954.5,
+   "July": 1954.5,
+   "June": 1954.5,
+   "March": 1954.5,
+   "May": 1954.5,
+   "November": 1954.5,
+   "October": 1954.5,
+   "September": 1954.5
+  },
+  "min": {
+   "April": 1949,
+   "August": 1949,
+   "December": 1949,
+   "February": 1949,
+   "January": 1949,
+   "July": 1949,
+   "June": 1949,
+   "March": 1949,
+   "May": 1949,
+   "November": 1949,
+   "October": 1949,
+   "September": 1949
+  },
+  "sum": {
+   "April": 23454,
+   "August": 23454,
+   "December": 23454,
+   "February": 23454,
+   "January": 23454,
+   "July": 23454,
+   "June": 23454,
+   "March": 23454,
+   "May": 23454,
+   "November": 23454,
+   "October": 23454,
+   "September": 23454
+  },
+  "value": "year"
+ },
+ "missing": {
+  "month": 0,
+  "passengers": 0,
+  "year": 0
+ },
+ "numericColumns": [
+  "year",
+  "passengers"
+ ],
+ "numpy": "2.5.4",
+ "nunique": {
+  "month": 12,
+  "passengers": 118,
+  "year": 12
+ },
+ "pandas": "3.0.6",
+ "quantiles": {
+  "passengers": {
+   "0.1": 135.3,
+   "0.333": 200.238,
+   "0.9": 453.2
+  },
+  "year": {
+   "0.1": 1950.0,
+   "0.333": 1952.619,
+   "0.9": 1959.0
+  }
+ },
+ "shape": [
+  144,
+  3
+ ],
+ "sortDescFirst5": [
+  1960,
+  1960,
+  1960,
+  1960,
+  1960
+ ],
+ "sortDescLast5": [
+  1949,
+  1949,
+  1949,
+  1949,
+  1949
+ ],
+ "valueCounts": {
+  "month": {
+   "distinct": 12,
+   "top": {
+    "April": 12,
+    "August": 12,
+    "December": 12,
+    "February": 12,
+    "January": 12,
+    "July": 12,
+    "June": 12,
+    "March": 12,
+    "May": 12,
+    "November": 12,
+    "October": 12,
+    "September": 12
+   },
+   "truncated": false
+  }
+ }
+}

@@ -1,0 +1,218 @@
+{
+ "columns": [
+  "country",
+  "year",
+  "pop",
+  "continent",
+  "lifeExp",
+  "gdpPercap"
+ ],
+ "corr": {
+  "columns": [
+   "year",
+   "pop",
+   "lifeExp",
+   "gdpPercap"
+  ],
+  "matrix": [
+   [
+    1.0,
+    0.0823080778,
+    0.4356112241,
+    0.2273180685
+   ],
+   [
+    0.0823080778,
+    1.0,
+    0.0649553692,
+    -0.0255995751
+   ],
+   [
+    0.4356112241,
+    0.0649553692,
+    1.0,
+    0.5837062199
+   ],
+   [
+    0.2273180685,
+    -0.0255995751,
+    0.5837062199,
+    1.0
+   ]
+  ]
+ },
+ "dataset": "gapminder",
+ "describe": {
+  "gdpPercap": {
+   "count": 1704.0,
+   "max": 113523.1329,
+   "mean": 7215.327081212,
+   "min": 241.1658765,
+   "q25": 1202.06030925,
+   "q50": 3531.8469885,
+   "q75": 9325.462346,
+   "std": 9857.4545425416
+  },
+  "lifeExp": {
+   "count": 1704.0,
+   "max": 82.603,
+   "mean": 59.4744393662,
+   "min": 23.599,
+   "q25": 48.198,
+   "q50": 60.7125,
+   "q75": 70.8455,
+   "std": 12.9171074152
+  },
+  "pop": {
+   "count": 1704.0,
+   "max": 1318683096.0,
+   "mean": 29601212.325117372,
+   "min": 60011.0,
+   "q25": 2793664.0,
+   "q50": 7023595.5,
+   "q75": 19585221.75,
+   "std": 106157896.74682795
+  },
+  "year": {
+   "count": 1704.0,
+   "max": 2007.0,
+   "mean": 1979.5,
+   "min": 1952.0,
+   "q25": 1965.75,
+   "q50": 1979.5,
+   "q75": 1993.25,
+   "std": 17.265329509
+  }
+ },
+ "dtypes": {
+  "continent": "string",
+  "country": "string",
+  "gdpPercap": "number",
+  "lifeExp": "number",
+  "pop": "number",
+  "year": "number"
+ },
+ "groupby": {
+  "by": "continent",
+  "count": {
+   "Africa": 624,
+   "Americas": 300,
+   "Asia": 396,
+   "Europe": 360,
+   "Oceania": 24
+  },
+  "max": {
+   "Africa": 2007,
+   "Americas": 2007,
+   "Asia": 2007,
+   "Europe": 2007,
+   "Oceania": 2007
+  },
+  "mean": {
+   "Africa": 1979.5,
+   "Americas": 1979.5,
+   "Asia": 1979.5,
+   "Europe": 1979.5,
+   "Oceania": 1979.5
+  },
+  "median": {
+   "Africa": 1979.5,
+   "Americas": 1979.5,
+   "Asia": 1979.5,
+   "Europe": 1979.5,
+   "Oceania": 1979.5
+  },
+  "min": {
+   "Africa": 1952,
+   "Americas": 1952,
+   "Asia": 1952,
+   "Europe": 1952,
+   "Oceania": 1952
+  },
+  "sum": {
+   "Africa": 1235208,
+   "Americas": 593850,
+   "Asia": 783882,
+   "Europe": 712620,
+   "Oceania": 47508
+  },
+  "value": "year"
+ },
+ "missing": {
+  "continent": 0,
+  "country": 0,
+  "gdpPercap": 0,
+  "lifeExp": 0,
+  "pop": 0,
+  "year": 0
+ },
+ "numericColumns": [
+  "year",
+  "pop",
+  "lifeExp",
+  "gdpPercap"
+ ],
+ "numpy": "2.5.4",
+ "nunique": {
+  "continent": 5,
+  "country": 142,
+  "gdpPercap": 1704,
+  "lifeExp": 1626,
+  "pop": 1704,
+  "year": 12
+ },
+ "pandas": "3.0.6",
+ "quantiles": {
+  "gdpPercap": {
+   "0.1": 687.71836128,
+   "0.333": 1654.509591923,
+   "0.9": 19449.138209
+  },
+  "lifeExp": {
+   "0.1": 41.5108,
+   "0.333": 52.098396,
+   "0.9": 75.097
+  },
+  "pop": {
+   "0.1": 946367.1000000002,
+   "0.333": 3838365.307,
+   "0.9": 54801369.50000002
+  },
+  "year": {
+   "0.1": 1957.0,
+   "0.333": 1967.495,
+   "0.9": 2002.0
+  }
+ },
+ "shape": [
+  1704,
+  6
+ ],
+ "sortDescFirst5": [
+  2007,
+  2007,
+  2007,
+  2007,
+  2007
+ ],
+ "sortDescLast5": [
+  1952,
+  1952,
+  1952,
+  1952,
+  1952
+ ],
+ "valueCounts": {
+  "continent": {
+   "distinct": 5,
+   "top": {
+    "Africa": 624,
+    "Americas": 300,
+    "Asia": 396,
+    "Europe": 360,
+    "Oceania": 24
+   },
+   "truncated": false
+  }
+ }
+}
