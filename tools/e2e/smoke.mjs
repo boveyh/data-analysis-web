@@ -74,9 +74,17 @@ const browser = await puppeteer.launch({
     '--force-color-profile=srgb', '--font-render-hinting=none',
     // a worker that cannot spawn would silently disable a feature under test
     '--allow-file-access-from-files',
+    /* Only when pointed at an external origin (--url). Corporate proxies and
+       local TLS inspection present a chain this Chrome does not trust, and the
+       symptom is nasty: the first navigation succeeds, then individual fetches
+       fail, so a dataset silently never loads and the failure looks like an app
+       bug. Never applied to the localhost server, where a bad certificate would
+       be a real problem worth failing on. */
+    ...(EXT_URL ? ['--ignore-certificate-errors'] : []),
   ],
   defaultViewport: { width: 1500, height: 960, deviceScaleFactor: 1 },
 });
+if (EXT_URL) console.log('           · ignoring certificate errors (external origin)');
 
 const page = await browser.newPage();
 await page.setCacheEnabled(false);
