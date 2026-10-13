@@ -22,6 +22,39 @@ const toNumber = (v) => {
   return Number.isNaN(n) ? NaN : n;
 };
 
+/**
+ * min/max over a numeric array, without the spread operator.
+ *
+ * `Math.min(...arr)` throws `RangeError: Maximum call stack size exceeded`
+ * somewhere above ~125k elements (measured: 130,000 fails, 54,000 is fine).
+ * Nothing here is bounded by the bundled datasets — the app accepts an upload
+ * of any size — so a 200k-row column used to make `describe()`,
+ * `aggregate('min')` and `histogram()` fail outright. A loop has no such limit
+ * and is faster besides.
+ *
+ * NaN propagates exactly as `Math.min` would, because `aggregate()` relies on
+ * that to report a non-numeric column rather than inventing a number.
+ */
+function minOf(nums) {
+  let m = Infinity;
+  for (let i = 0; i < nums.length; i++) {
+    const v = nums[i];
+    if (Number.isNaN(v)) return NaN;
+    if (v < m) m = v;
+  }
+  return m;
+}
+
+function maxOf(nums) {
+  let m = -Infinity;
+  for (let i = 0; i < nums.length; i++) {
+    const v = nums[i];
+    if (Number.isNaN(v)) return NaN;
+    if (v > m) m = v;
+  }
+  return m;
+}
+
 /** pandas-like dtype inference for a whole column. */
 export function inferType(values) {
   const nonNull = values.filter((v) => !isNull(v));
@@ -185,23 +218,54 @@ export class DataFrame {
 
   /* ------------------------------- sorting ----------------------------- */
 
+  /**
+   * Sort rows by one column, returning a NEW frame.
+   *
+   * Decorate–sort–undecorate rather than sorting indices with a comparator.
+   * The comparator form re-derived the key on every comparison — `toNumber()`
+   * runs a regex on every call, and `localeCompare` allocated an options
+   * object each time — so a 53,940-row numeric sort was doing roughly 1.7M
+   * regex passes and took ~450 ms. Extracting the key once turns each
+   * comparison into a subtraction or a string compare.
+   *
+   * `na_position` matches pandas' default: nulls sort last in BOTH directions.
+   */
   sortValues(by, ascending = true) {
     const type = this.type(by);
-    const idx = this.rowIndexArray();
+    const col = this.data[by];
     const dir = ascending ? 1 : -1;
-    idx.sort((a, b) => {
-      const va = this.data[by][a], vb = this.data[by][b];
-      const na = isNull(va), nb = isNull(vb);
-      if (na && nb) return 0;
-      if (na) return 1;              // NaN always last (pandas na_position='last')
-      if (nb) return -1;
-      let cmp;
-      if (type === 'number') cmp = toNumber(va) - toNumber(vb);
-      else if (type === 'date') cmp = Date.parse(va) - Date.parse(vb);
-      else cmp = String(va).localeCompare(String(vb), undefined, { numeric: true });
-      return cmp * dir;
+    const n = this.nrows;
+    if (n < 2) return this.clone();
+
+    const keys = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const v = col[i];
+      if (isNull(v)) { keys[i] = { i, isNull: true, k: 0 }; continue; }
+      let k;
+      if (type === 'number') k = toNumber(v);
+      else if (type === 'date') k = Date.parse(v);
+      else k = String(v);
+      keys[i] = { i, isNull: false, k };
+    }
+
+    /* one collator, not one options object per comparison */
+    const collate = (type === 'number' || type === 'date')
+      ? null
+      : new Intl.Collator(undefined, { numeric: true });
+
+    keys.sort((a, b) => {
+      /* nulls always last, regardless of direction */
+      if (a.isNull) return b.isNull ? a.i - b.i : 1;
+      if (b.isNull) return -1;
+      let c;
+      if (collate) c = collate.compare(a.k, b.k);
+      else if (a.k < b.k) c = -1;
+      else if (a.k > b.k) c = 1;
+      else c = 0;
+      return c * dir;
     });
-    return this.take(idx);
+
+    return this.take(keys.map((e) => e.i));
   }
 
   /* ------------------------------ describe ----------------------------- */
@@ -293,12 +357,29 @@ export class DataFrame {
   corr(method = 'pearson') {
     const cols = this.numericCols;
     const matrix = cols.map(() => cols.map(() => null));
+
+    /* Convert each column ONCE, up front.
+     *
+     * `pairValues()` re-parsed both of its columns on every pair, and
+     * `toNumber()` runs a regex on every value — so a 10-column frame paid for
+     * each column nine times over, i.e. ~4.9M regex passes on 53,940 rows. With
+     * the columns pre-converted, the pairwise pass is a plain scan and `corr()`
+     * drops from ~218 ms to well under 100 ms on the same data. */
+    const numeric = cols.map((c) => {
+      const raw = this.data[c];
+      const out = new Float64Array(raw.length);
+      for (let i = 0; i < raw.length; i++) {
+        const v = raw[i];
+        out[i] = isNull(v) ? NaN : toNumber(v);
+      }
+      return out;
+    });
+
     for (let i = 0; i < cols.length; i++) {
-      for (let j = i; j < cols.length; j++) {
-        const [a, b] = pairValues(this.data[cols[i]], this.data[cols[j]]);
-        let r;
-        if (cols[i] === cols[j]) r = 1;
-        else r = method === 'spearman' ? spearman(a, b) : pearson(a, b);
+      matrix[i][i] = 1;
+      for (let j = i + 1; j < cols.length; j++) {
+        const [a, b] = pairNumeric(numeric[i], numeric[j]);
+        const r = method === 'spearman' ? spearman(a, b) : pearson(a, b);
         matrix[i][j] = r; matrix[j][i] = r;
       }
     }
@@ -342,8 +423,8 @@ export function aggregate(values, rows, fn) {
     case 'nunique': return new Set(vals.filter((v) => !isNull(v)).map(String)).size;
     case 'first': return vals.find((v) => !isNull(v)) ?? null;
     case 'last': return [...vals].reverse().find((v) => !isNull(v)) ?? null;
-    case 'min': { const n = vals.filter((v) => !isNull(v)); return n.length ? Math.min(...n.map(toNumber)) : null; }
-    case 'max': { const n = vals.filter((v) => !isNull(v)); return n.length ? Math.max(...n.map(toNumber)) : null; }
+    case 'min': { const n = vals.filter((v) => !isNull(v)); return n.length ? minOf(n.map(toNumber)) : null; }
+    case 'max': { const n = vals.filter((v) => !isNull(v)); return n.length ? maxOf(n.map(toNumber)) : null; }
     case 'sum': { const n = vals.filter((v) => !isNull(v)); return n.length ? n.reduce((s, v) => s + toNumber(v), 0) : null; }
     case 'mean': { const n = vals.filter((v) => !isNull(v)); return n.length ? n.reduce((s, v) => s + toNumber(v), 0) / n.length : null; }
     case 'median': return quantile(vals.filter((v) => !isNull(v)).map(toNumber), 0.5);
@@ -354,13 +435,26 @@ export function aggregate(values, rows, fn) {
 
 /* ----------------------------- statistics -------------------------------- */
 
+/**
+ * The q-quantile of an ALREADY-SORTED numeric array (linear interpolation,
+ * matching numpy's default rule).
+ *
+ * Split out from `quantile()` so `describe()` can sort a column once and read
+ * three quantiles from it. `quantile()` re-sorts on every call, and calling it
+ * three times per column was the single most expensive thing `describe()` did —
+ * on the 53,940-row diamonds dataset it was ~250 ms of a ~275 ms total.
+ */
+function quantileSorted(sorted, q) {
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
 export function quantile(sortedOrRaw, q) {
   const arr = sortedOrRaw.map(toNumber).filter((v) => !Number.isNaN(v)).sort((a, b) => a - b);
-  if (!arr.length) return null;
-  const pos = (arr.length - 1) * q;
-  const lo = Math.floor(pos), hi = Math.ceil(pos);
-  if (lo === hi) return arr[lo];
-  return arr[lo] + (arr[hi] - arr[lo]) * (pos - lo);
+  return quantileSorted(arr, q);
 }
 
 export function stddev(arr) {
@@ -374,15 +468,17 @@ export function describeSeries(values) {
   const count = nums.length;
   if (!count) return { count: 0, mean: null, std: null, min: null, q25: null, q50: null, q75: null, max: null, sum: null };
   const sum = nums.reduce((s, v) => s + v, 0);
+  /* one sort, three reads — see quantileSorted */
+  const sorted = nums.slice().sort((a, b) => a - b);
   return {
     count,
     mean: sum / count,
     std: stddev(nums),
-    min: Math.min(...nums),
-    q25: quantile(nums, 0.25),
-    q50: quantile(nums, 0.5),
-    q75: quantile(nums, 0.75),
-    max: Math.max(...nums),
+    min: sorted[0],
+    q25: quantileSorted(sorted, 0.25),
+    q50: quantileSorted(sorted, 0.5),
+    q75: quantileSorted(sorted, 0.75),
+    max: sorted[sorted.length - 1],
     sum,
     missing: values.length - count,
   };
@@ -430,12 +526,28 @@ function pairValues(a, b) {
   return [x, y];
 }
 
+/**
+ * Pairwise-complete observations from two already-converted numeric arrays
+ * (NaN marks a missing value). Same contract as `pairValues`, minus the
+ * re-parsing — see the note in `corr()`.
+ */
+function pairNumeric(a, b) {
+  const n = Math.min(a.length, b.length);
+  const x = [], y = [];
+  for (let i = 0; i < n; i++) {
+    const va = a[i], vb = b[i];
+    if (Number.isNaN(va) || Number.isNaN(vb)) continue;
+    x.push(va); y.push(vb);
+  }
+  return [x, y];
+}
+
 /* ------------------------------ histogram -------------------------------- */
 
 export function histogram(values, bins = 20) {
   const nums = values.filter((v) => !isNull(v)).map(toNumber).filter((v) => !Number.isNaN(v));
   if (!nums.length) return { edges: [], counts: [], centers: [] };
-  const min = Math.min(...nums), max = Math.max(...nums);
+  const min = minOf(nums), max = maxOf(nums);
   const width = (max - min) / bins || 1;
   const edges = Array.from({ length: bins + 1 }, (_, i) => min + i * width);
   const counts = new Array(bins).fill(0);
@@ -656,6 +768,433 @@ export function oneWayAnova(groups) {
     k: gs.length, n,
   };
 }
+
+/* ------------------------ more inferential statistics --------------------- */
+/* Everything below reuses the distribution tails above — no new maths is
+ * introduced, only new test statistics that funnel into the same gammaln /
+ * ibeta core. Critical values are pinned in tools/selftest.mjs.
+ */
+
+const cleanNums = (arr) =>
+  arr.filter((v) => !isNull(v)).map(toNumber).filter((v) => !Number.isNaN(v));
+
+const meanOf = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+
+/** Standard normal CDF, built from the regularised gamma already here. */
+export function normalCdf(z) {
+  if (!Number.isFinite(z)) return z > 0 ? 1 : 0;
+  const q = gammaQ(0.5, (z * z) / 2);
+  return z >= 0 ? 1 - 0.5 * q : 0.5 * q;
+}
+
+/** Inverse standard normal CDF (Acklam's rational approximation, |ε| < 1.15e-9). */
+export function probit(p) {
+  if (!(p > 0) || p >= 1) return p <= 0 ? -Infinity : Infinity;
+  const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+    1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+  const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+    6.680131188771972e+01, -1.328068155288572e+01];
+  const c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+    -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+  const d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+    3.754408661907416e+00];
+  const plow = 0.02425, phigh = 1 - plow;
+  let q, r;
+  if (p < plow) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p <= phigh) {
+    q = p - 0.5; r = q * q;
+    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q /
+      (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+    ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+}
+
+/** Two-tailed significance test for a Pearson correlation (t with n−2 df). */
+export function pearsonTest(a, b) {
+  const [x, y] = pairValues(a, b);
+  const n = x.length;
+  if (n < 3) return null;
+  const r = pearson(x, y);
+  if (r === null) return null;
+  const df = n - 2;
+  if (Math.abs(r) >= 1) return { r, n, df, t: Infinity, p: 0 };
+  const t = r * Math.sqrt(df / (1 - r * r));
+  return { r, n, df, t, p: tPValue(t, df) };
+}
+
+/** Tie correction Σ(t³ − t), shared by the rank-based tests below. */
+function tieSum(values) {
+  const counts = new Map();
+  for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
+  let s = 0;
+  for (const t of counts.values()) if (t > 1) s += t ** 3 - t;
+  return s;
+}
+
+/**
+ * Mann-Whitney U (Wilcoxon rank-sum) — the non-parametric stand-in for
+ * Welch's t-test. Normal approximation with tie correction and a continuity
+ * correction; exact enough for the sample sizes a browser tool sees.
+ */
+export function mannWhitneyU(a, b) {
+  const x = cleanNums(a), y = cleanNums(b);
+  const n1 = x.length, n2 = y.length;
+  if (n1 < 1 || n2 < 1) return null;
+
+  const all = [...x, ...y];
+  const ranks = rank(all);
+  let r1 = 0;
+  for (let i = 0; i < n1; i++) r1 += ranks[i];
+  const u1 = r1 - (n1 * (n1 + 1)) / 2;
+  const u2 = n1 * n2 - u1;
+
+  const n = n1 + n2;
+  const mu = (n1 * n2) / 2;
+  const tie = tieSum(all);
+  const varU = ((n1 * n2) / 12) * ((n + 1) - (n > 1 ? tie / (n * (n - 1)) : 0));
+
+  const base = {
+    u: Math.min(u1, u2), u1, u2, n1, n2,
+    median1: quantile(x, 0.5), median2: quantile(y, 0.5),
+  };
+  if (!(varU > 0)) return { ...base, z: 0, p: 1, method: 'exact-ties' };
+
+  const d = u1 - mu;
+  const z = (d - 0.5 * Math.sign(d)) / Math.sqrt(varU);
+  return {
+    ...base, z, p: 2 * (1 - normalCdf(Math.abs(z))),
+    method: 'normal',
+    rankBiserial: (2 * u1) / (n1 * n2) - 1,
+  };
+}
+
+/** Kruskal-Wallis H — the non-parametric one-way ANOVA. Chi-square tail. */
+export function kruskalWallis(groups) {
+  const gs = groups.map(cleanNums).filter((g) => g.length);
+  const k = gs.length;
+  const n = gs.reduce((s, g) => s + g.length, 0);
+  if (k < 2 || n < 3) return null;
+
+  const all = gs.flat();
+  const ranks = rank(all);
+  let idx = 0, acc = 0;
+  for (const g of gs) {
+    let s = 0;
+    for (let i = 0; i < g.length; i++) s += ranks[idx++];
+    acc += (s * s) / g.length;
+  }
+  let h = (12 / (n * (n + 1))) * acc - 3 * (n + 1);
+
+  const corr = 1 - tieSum(all) / (n ** 3 - n);
+  if (corr > 0) h /= corr;
+
+  const df = k - 1;
+  return {
+    h, df, p: chi2PValue(h, df), k, n,
+    medians: gs.map((g) => quantile(g, 0.5)),
+    sizes: gs.map((g) => g.length),
+  };
+}
+
+/**
+ * Levene's test for equal variance. Defaults to centring on the median
+ * (Brown-Forsythe), which is the robust variant scipy.levene also defaults
+ * to; it is simply a one-way ANOVA on the absolute deviations.
+ */
+export function leveneTest(groups, center = 'median') {
+  const gs = groups.map(cleanNums).filter((g) => g.length >= 2);
+  if (gs.length < 2) return null;
+  const z = gs.map((g) => {
+    const c = center === 'mean' ? meanOf(g) : quantile(g, 0.5);
+    return g.map((v) => Math.abs(v - c));
+  });
+  const a = oneWayAnova(z);
+  if (!a) return null;
+  return { w: a.f, df1: a.dfBetween, df2: a.dfWithin, p: a.p, center, k: a.k, n: a.n };
+}
+
+/** Jarque-Bera normality test — chi-square with 2 df. */
+export function jarqueBera(values) {
+  const x = cleanNums(values);
+  const n = x.length;
+  if (n < 4) return null;
+  const m = meanOf(x);
+  let m2 = 0, m3 = 0, m4 = 0;
+  for (const v of x) {
+    const d = v - m, d2 = d * d;
+    m2 += d2; m3 += d2 * d; m4 += d2 * d2;
+  }
+  m2 /= n; m3 /= n; m4 /= n;
+  if (!(m2 > 0)) return null;
+  const skew = m3 / Math.pow(m2, 1.5);
+  const kurt = m4 / (m2 * m2);
+  const jb = (n / 6) * (skew * skew + ((kurt - 3) ** 2) / 4);
+  return {
+    jb, df: 2, p: chi2PValue(jb, 2), n,
+    skew, kurtosis: kurt, excessKurtosis: kurt - 3,
+  };
+}
+
+/**
+ * Normal QQ coordinates: quantiles of the data against the matching normal
+ * quantiles, plus the quartile reference line scipy's probplot draws.
+ */
+export function qqData(values, maxPoints = 500) {
+  const x = cleanNums(values).slice().sort((a, b) => a - b);
+  const n = x.length;
+  if (n < 5) return null;
+
+  const step = Math.max(1, Math.ceil(n / maxPoints));
+  const points = [];
+  for (let i = 0; i < n; i += step) {
+    points.push([probit((i + 0.5) / n), x[i]]);
+  }
+
+  // Reference line through the quartiles (against theoretical quartiles).
+  const q1 = quantile(x, 0.25), q3 = quantile(x, 0.75);
+  const zq = probit(0.75);                     // ±0.6745
+  const slope = (q3 - q1) / (2 * zq);
+  const intercept = quantile(x, 0.5);
+  return { points, slope, intercept, n, sampled: points.length, step };
+}
+
+/* ------------------------------ regression -------------------------------- */
+
+/** Ordinary least squares on pairwise-complete observations. */
+export function linearFit(x, y) {
+  const xs = [], ys = [];
+  for (let i = 0; i < x.length; i++) {
+    if (isNull(x[i]) || isNull(y[i])) continue;
+    const a = toNumber(x[i]), b = toNumber(y[i]);
+    if (Number.isNaN(a) || Number.isNaN(b)) continue;
+    xs.push(a); ys.push(b);
+  }
+  const n = xs.length;
+  if (n < 2) return null;
+  const mx = meanOf(xs), my = meanOf(ys);
+  let sxx = 0, sxy = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+  }
+  if (!(sxx > 0)) return null;
+  const slope = sxy / sxx;
+  const intercept = my - slope * mx;
+  const r = pearson(xs, ys);
+  return {
+    slope, intercept, n,
+    r, r2: r === null ? null : r * r,
+    residuals: ys.map((v, i) => v - (slope * xs[i] + intercept)),
+    predicted: xs.map((v) => slope * v + intercept),
+    xRange: [minOf(xs), maxOf(xs)],
+  };
+}
+
+/* ------------------------------ time series ------------------------------- */
+
+/** Split a value into [year, monthIndex, day] without timezone surprises. */
+function dateParts(v) {
+  if (v instanceof Date) return [v.getFullYear(), v.getMonth(), v.getDate()];
+  const s = String(v).trim();
+  const m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (m) return [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return [d.getFullYear(), d.getMonth(), d.getDate()];
+}
+
+const isoDate = (y, m, d) =>
+  `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+/** Period label a row falls into: 'D' day, 'W' ISO week start, 'M' month. */
+export function periodKey(v, freq) {
+  const parts = dateParts(v);
+  if (!parts) return null;
+  let [y, m, d] = parts;
+  if (freq === 'M') return isoDate(y, m, 1);
+  if (freq === 'W') {
+    const dt = new Date(y, m, d);
+    const back = (dt.getDay() + 6) % 7;        // Monday-start weeks
+    const w = new Date(y, m, d - back);
+    y = w.getFullYear(); m = w.getMonth(); d = w.getDate();
+  }
+  return isoDate(y, m, d);
+}
+
+/**
+ * pandas' `df.resample(freq).agg(...)`: bucket rows by period and aggregate.
+ * The period column keeps the original date column's name, like pandas
+ * turning the datetime index into the result's index.
+ */
+export function resample(df, dateCol, freq, aggs = []) {
+  if (!df.has(dateCol)) throw new Error(`resample: unknown column "${dateCol}"`);
+  const PERIOD = '\u0001period';
+  const data = {};
+  for (const n of df.colNames) data[n] = df.data[n].slice();
+  data[PERIOD] = df.values(dateCol).map((v) => periodKey(v, freq));
+
+  const tmp = new DataFrame([...df.colNames, PERIOD], data, df.meta);
+  const out = tmp.groupby(
+    [PERIOD],
+    aggs.length ? aggs : df.numericCols.map((c) => ({ col: c, fn: 'mean' })),
+  );
+  const renamed = out.rename({ [PERIOD]: dateCol });
+  return renamed.sortValues(dateCol, true);
+}
+
+const ROLL_FUNCS = ['mean', 'std', 'sum', 'min', 'max', 'median'];
+
+/**
+ * pandas' `series.rolling(window).mean()` — trailing window, leading
+ * positions left null exactly as pandas does with the default min_periods.
+ */
+export function rolling(values, window, fn = 'mean') {
+  if (!(window >= 1)) throw new Error('rolling: window must be >= 1');
+  if (!ROLL_FUNCS.includes(fn)) throw new Error(`rolling: unknown fn "${fn}"`);
+  const nums = values.map((v) => (isNull(v) ? NaN : toNumber(v)));
+  const out = new Array(nums.length).fill(null);
+  for (let i = window - 1; i < nums.length; i++) {
+    const win = nums.slice(i - window + 1, i + 1);
+    if (win.some(Number.isNaN)) continue;
+    if (fn === 'mean') out[i] = meanOf(win);
+    else if (fn === 'sum') out[i] = win.reduce((s, v) => s + v, 0);
+    else if (fn === 'min') out[i] = minOf(win);
+    else if (fn === 'max') out[i] = maxOf(win);
+    else if (fn === 'median') out[i] = quantile(win, 0.5);
+    else out[i] = stddev(win);
+  }
+  return out;
+}
+
+/** Period-over-period change in %, matching `series.pct_change()`. */
+export function pctChange(values) {
+  const out = new Array(values.length).fill(null);
+  let prev = null;
+  for (let i = 0; i < values.length; i++) {
+    const v = isNull(values[i]) ? NaN : toNumber(values[i]);
+    if (Number.isNaN(v)) { prev = null; continue; }
+    if (prev !== null && prev !== 0) out[i] = (v - prev) / prev;
+    prev = v;
+  }
+  return out;
+}
+
+/** Lagged copy of a column, matching `series.shift(periods)`. */
+export function shift(values, periods = 1) {
+  const out = new Array(values.length).fill(null);
+  for (let i = 0; i < values.length; i++) {
+    const j = i - periods;
+    out[i] = j >= 0 && j < values.length ? values[j] : null;
+  }
+  return out;
+}
+
+/* ------------------------------- pivot table ------------------------------ */
+
+export const PIVOT_AGGS = ['mean', 'sum', 'count', 'median', 'min', 'max', 'std', 'nunique'];
+
+/**
+ * Excel-style pivot: fields into rows / columns, one value field aggregated
+ * per cell. Multiple row or column fields are joined into a composite key,
+ * which is what a two-level drag target does in a spreadsheet anyway.
+ */
+/**
+ * Cartesian-product budget for `pivotTable`.
+ *
+ * A pivot is inherently O(rows × cols): every cell must be produced before it
+ * can be drawn. Two wide axes therefore ask for an unbounded amount of work —
+ * pivoting a 6,000-value timestamp against itself means 36 million cells, which
+ * froze the tab for 33 seconds in profiling. Callers that render the grid pass
+ * a budget and get `tooLarge` back instead of a hang.
+ */
+export const MAX_PIVOT_CELLS = 10000;
+
+export function pivotTable(df, { rows = [], cols = [], value = null, agg = 'mean', maxCells = MAX_PIVOT_CELLS } = {}) {
+  if (!rows.length || !value || !df.has(value)) return null;
+  if (!PIVOT_AGGS.includes(agg)) return null;
+
+  const keyOf = (fields, i) => fields
+    .map((f) => { const v = df.values(f)[i]; return isNull(v) ? '' : String(v); })
+    .join(' / ');
+
+  const rowSet = new Set(), colSet = new Set();
+  const cells = new Map();
+  const valSeries = df.values(value);
+
+  for (let i = 0; i < df.nrows; i++) {
+    const r = keyOf(rows, i);
+    const c = cols.length ? keyOf(cols, i) : '';
+    rowSet.add(r); colSet.add(c);
+    const k = `${r}\u0001${c}`;
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k).push(valSeries[i]);
+  }
+
+  const cmp = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+  const rowKeys = [...rowSet].sort(cmp);
+  const colKeys = [...colSet].sort(cmp);
+
+  const cellCount = rowKeys.length * colKeys.length;
+  if (cellCount > maxCells) {
+    return {
+      rowKeys, colKeys, grid: null, tooLarge: true, cellCount, maxCells,
+      agg, value, rows, cols, single: !cols.length,
+    };
+  }
+
+  const grid = rowKeys.map((r) => colKeys.map((c) => {
+    const bucket = cells.get(`${r}\u0001${c}`);
+    if (!bucket || !bucket.length) return null;
+    return aggregate(bucket, bucket.map((_, i) => i), agg);
+  }));
+
+  return { rowKeys, colKeys, grid, agg, value, rows, cols, single: !cols.length };
+}
+
+/* ---------------------------- data hygiene -------------------------------- */
+
+/**
+ * Columns that *look* numeric but contain a minority of junk. pandas silently
+ * makes these `object` and every downstream numeric op then fails on the whole
+ * column; surfacing it up front is far kinder than the silent degradation.
+ */
+export function columnTypeConflicts(df, tolerance = 0.05) {
+  const out = [];
+  for (const c of df.columns) {
+    if (c.type === 'number') continue;
+    const vals = cleanAndRaw(df.values(c.name));
+    if (vals.length < 5) continue;
+
+    let numeric = 0;
+    const junk = new Map();
+    for (const v of vals) {
+      if (!Number.isNaN(toNumber(v))) { numeric++; continue; }
+      const k = String(v);
+      junk.set(k, (junk.get(k) || 0) + 1);
+    }
+    const rate = numeric / vals.length;
+    if (rate < 1 - tolerance) continue;
+
+    out.push({
+      name: c.name,
+      numeric,
+      total: vals.length,
+      rate,
+      samples: [...junk.entries()]
+        .sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([v, n]) => ({ value: v, count: n })),
+    });
+  }
+  return out.sort((a, b) => b.rate - a.rate);
+}
+
+function cleanAndRaw(values) { return values.filter((v) => !isNull(v)); }
 
 /* ------------------------- multivariate helpers --------------------------- */
 
