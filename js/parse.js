@@ -72,7 +72,13 @@ export function matrixToColumns(rows) {
     const row = rows[r];
     for (let c = 0; c < columns.length; c++) {
       const v = row[c];
-      data[columns[c]].push(v === undefined ? null : (v.trim() === '' ? null : v.trim()));
+      /* The CSV reader only ever produces strings, but the Excel path hands us
+         `null` for a blank cell and can hand us other scalars. Normalise before
+         trimming: the previous `v.trim()` on a null cell threw, and one blank
+         cell is enough to fail the entire import. */
+      if (v === undefined || v === null) { data[columns[c]].push(null); continue; }
+      const s = (typeof v === 'string' ? v : String(v)).trim();
+      data[columns[c]].push(s === '' ? null : s);
     }
   }
   return { columns, data };

@@ -82,14 +82,25 @@
 
       <div class="dropzone" id="dropzone" tabindex="0" role="button">
         <svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 16V4m0 0L8 8m4-4l4 4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
-        <p class="dz-title" data-i18n="side.dropTitle">拖拽 CSV / TSV / JSON 到此</p>
+        <p class="dz-title" data-i18n="side.dropTitle">拖拽 CSV / TSV / JSON / XLSX 到此</p>
         <p class="dz-sub" data-i18n="side.dropSub">或点击选择文件 · 数据只在本地处理</p>
-        <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.json" hidden />
+        <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.json,.xlsx,.xlsm" hidden />
+      </div>
+
+      <div class="sheet-picker" id="sheetPicker" hidden>
+        <label class="inline-field">
+          <span data-i18n="xlsx.sheet">工作表</span>
+          <select id="sheetSelect" class="select"></select>
+        </label>
+        <p class="muted-note" id="sheetNote"></p>
       </div>
 
       <div class="side-row">
         <button class="btn btn-ghost btn-sm" id="btnPaste" data-i18n="side.paste">粘贴数据</button>
-        <button class="btn btn-ghost btn-sm" id="btnExport" data-i18n="side.export">导出 CSV</button>
+        <div class="dropdown" id="exportDrop">
+          <button class="btn btn-ghost btn-sm" id="btnExport" aria-haspopup="true" aria-expanded="false" data-i18n="side.export">导出</button>
+          <div class="dropdown-menu dropdown-menu-wide" id="exportMenu" role="menu"></div>
+        </div>
       </div>
     </section>
 
@@ -133,8 +144,29 @@
 
     <div class="panels">
 
+      <div class="card notice-card" id="shareNotice" hidden>
+        <div class="notice" role="alert">
+          <span class="notice-dot" aria-hidden="true"></span>
+          <div class="notice-text">
+            <p class="notice-title" data-i18n="share.emptyTitle">这个链接还原不了</p>
+            <p class="notice-body" data-i18n="share.emptyBody"></p>
+          </div>
+          <label class="btn btn-ghost btn-sm" for="fileInput" data-i18n="share.emptyAction">重新上传数据</label>
+        </div>
+      </div>
+
       <!-- ---------------------------- TABLE ---------------------------- -->
       <section class="panel is-active" id="panel-table" role="tabpanel" aria-labelledby="tab-table" data-panel="table">
+        <div class="card notice-card" id="conflictCard" hidden>
+          <div class="notice" role="status">
+            <span class="notice-dot" aria-hidden="true"></span>
+            <div class="notice-text">
+              <p class="notice-title" data-i18n="conflict.title">数据类型冲突</p>
+              <p class="notice-body" id="conflictBody"></p>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="conflictClose" data-i18n="action.close">关闭</button>
+          </div>
+        </div>
         <div class="card">
           <div class="card-toolbar">
             <div class="search-wrap">
@@ -181,11 +213,15 @@
         </div>
 
         <div class="card">
-          <div class="card-head">
-            <h2 data-i18n="stats.missingMap">缺失值分布图</h2>
-            <p class="card-sub" id="missChartSub" data-i18n="stats.missingMapSub">missingno 风格的缺失矩阵 · 橙色 = 缺失，灰色 = 有值</p>
+          <div class="card-head row-head">
+            <div>
+              <h2 data-i18n="stats.missingMap">缺失值分布图</h2>
+              <p class="card-sub" id="missChartSub" data-i18n="stats.missingMapSub">missingno 风格的缺失矩阵 · 橙色 = 缺失，灰色 = 有值</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="missDownloadPng" data-i18n="chart.download">下载 PNG</button>
           </div>
           <div class="chart-box miss-box" id="missChart"></div>
+          <div class="sr-only" id="missChartA11y"></div>
         </div>
 
         <div class="card">
@@ -219,11 +255,13 @@
               <p class="card-sub" data-i18n="stats.valueCountsSub">选择一个分类字段，查看取值分布</p>
             </div>
             <select id="vcColumn" class="select"></select>
+            <button class="btn btn-ghost btn-sm" id="vcDownloadPng" data-i18n="chart.download">下载 PNG</button>
           </div>
           <div class="split">
             <div class="table-scroll" id="vcTable"></div>
             <div class="chart-box" id="vcChart"></div>
           </div>
+          <div class="sr-only" id="vcChartA11y"></div>
         </div>
       </section>
 
@@ -360,6 +398,36 @@
           <div class="card-head"><h2 data-i18n="gb.result">聚合结果</h2><p class="card-sub" id="gbSub"></p></div>
           <div class="table-scroll" id="gbTable"></div>
         </div>
+
+        <div class="card">
+          <div class="card-head row-head">
+            <div>
+              <h2 data-i18n="pivot.title">透视表 pivot_table()</h2>
+              <p class="card-sub" data-i18n="pivot.sub">把字段点进「行 / 列」，再选一个数值与聚合方式</p>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btnPivot" data-i18n="pivot.run">生成透视表</button>
+          </div>
+          <div class="pivot-grid">
+            <div class="field">
+              <label data-i18n="pivot.rows">行 index</label>
+              <select id="pvRows" class="select" multiple size="7" data-i18n-aria="pivot.rows"></select>
+            </div>
+            <div class="field">
+              <label data-i18n="pivot.cols">列 columns</label>
+              <select id="pvCols" class="select" multiple size="7" data-i18n-aria="pivot.cols"></select>
+            </div>
+            <div class="field">
+              <label data-i18n="pivot.value">值 values</label>
+              <select id="pvValue" class="select" data-i18n-aria="pivot.value"></select>
+            </div>
+            <div class="field">
+              <label data-i18n="pivot.agg">聚合 aggfunc</label>
+              <select id="pvAgg" class="select" data-i18n-aria="pivot.agg"></select>
+            </div>
+          </div>
+          <p class="field-hint" data-i18n="pivot.hint">按住 Ctrl / ⌘ 可多选。生成后可在「可视化」里把热力图的数据源切成「透视表聚合」。</p>
+          <div class="table-scroll" id="pivotTable"></div>
+        </div>
       </section>
 
       <!-- --------------------------- CHARTS --------------------------- -->
@@ -391,6 +459,14 @@
               <select id="chNumCols" class="select" multiple size="6" aria-label="numeric columns"></select>
               <p class="field-hint" data-i18n="chart.numColsHint">按住 Ctrl / ⌘ 可多选</p>
             </div>
+            <div class="field" id="heatModeField" data-field="heatMode" hidden>
+              <label data-i18n="chart.heatMode">热力图数据</label>
+              <select id="chHeatMode" class="select">
+                <option value="corr" data-i18n="chart.heatCorr">相关系数矩阵</option>
+                <option value="pivot" data-i18n="chart.heatPivot">透视表聚合</option>
+              </select>
+              <p class="field-hint" data-i18n="chart.heatHint">选「透视表聚合」后，使用「透视表」面板里配置的行 / 列 / 值</p>
+            </div>
             <div class="field-row checks">
               <label class="chk" data-field="stack"><input type="checkbox" id="chStack" /><span data-i18n="chart.stack">堆叠</span></label>
               <label class="chk" data-field="smooth"><input type="checkbox" id="chSmooth" /><span data-i18n="chart.smooth">平滑曲线</span></label>
@@ -411,6 +487,7 @@
               </div>
             </div>
             <div class="chart-box tall" id="mainChart"></div>
+            <div class="sr-only" id="chartA11y"></div>
             <div class="table-scroll collapsed" id="chartDataTable"></div>
           </div>
         </div>

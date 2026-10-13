@@ -475,6 +475,23 @@ select[multiple].select option:checked { background: var(--accent-soft); color: 
 .dropdown-menu input { width: 14px; height: 14px; accent-color: var(--accent); }
 .dropdown-menu .cname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* the export menu sits at the right edge of the sidebar, so it opens leftwards
+   rather than off-screen */
+.dropdown-menu-wide { left: auto; right: 0; min-width: 236px; max-width: 280px; }
+.menu-item {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 10px; border: 0; border-radius: 8px; background: none;
+  color: inherit; font: inherit; cursor: pointer;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-3); outline: none; }
+.menu-item .mi-label { display: block; font-size: 12.5px; font-weight: 550; }
+.menu-item .mi-hint { display: block; font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+
+/* ---------------------------- sheet picker -------------------------------- */
+.sheet-picker { margin-top: 11px; display: grid; gap: 5px; }
+.sheet-picker .inline-field { display: grid; gap: 5px; }
+.sheet-picker .muted-note { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ------------------------------- tables ---------------------------------- */
 .table-scroll { overflow: auto; max-height: 62vh; border-radius: var(--radius); border: 1px solid var(--border); }
 .table-scroll.collapsed { display: none; margin-top: 14px; }
@@ -829,3 +846,50 @@ tr.v-spacer { pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Chart canvases are opaque to assistive technology, so every chart also
+   publishes a text alternative. This keeps it out of the visual layout while
+   leaving it fully readable to a screen reader. */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* the two analysis charts on the statistics tab now carry their own export */
+.card-head .chart-actions { display: flex; gap: 6px; align-items: center; }
+
+/* pivot builder: four click-to-assign targets sitting side by side */
+.pivot-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.pivot-grid .field { margin: 0; }
+.pivot-grid label { font-size: 12px; color: var(--text-3); margin-bottom: 4px; display: block; }
+@media (max-width: 900px) { .pivot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .pivot-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* inline notice — used for share links that cannot be restored and for
+   columns whose dtype silently degrades to object */
+.notice-card { padding: 12px 14px; }
+.notice { display: flex; align-items: flex-start; gap: 10px; }
+.notice-dot {
+  flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%;
+  background: var(--warn, #d97706);
+}
+.notice-text { flex: 1; min-width: 0; }
+.notice-title { font-size: 13px; font-weight: 500; color: var(--text); margin: 0 0 2px; }
+.notice-body { font-size: 12.5px; color: var(--text-2); margin: 0; line-height: 1.55; }
+.notice-body code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px; padding: 1px 5px; border-radius: 5px;
+  background: var(--surface-3); color: var(--text);
+}
+#conflictCard .notice-dot, #shareNotice .notice-dot { background: var(--warn, #d97706); }

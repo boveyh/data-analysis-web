@@ -8,8 +8,14 @@ import { t, setLang, getLang, applyStatic } from './i18n.js';
 import {
   DataFrame, histogram, describeSeries, quantile,
   chiSquareTest, welchTTest, oneWayAnova, missingMatrix, numericMatrix,
+  pearsonTest, mannWhitneyU, kruskalWallis, leveneTest, jarqueBera, qqData,
+  linearFit, resample, rolling, pivotTable, columnTypeConflicts, PIVOT_AGGS,
+  MAX_PIVOT_CELLS,
 } from './dataframe.js';
 import { parseText } from './parse.js';
+import {
+  loadXLSX, isWorkbookFile, readWorkbook, sheetNames, sheetToColumns, writeWorkbook,
+} from './xlsx.js';
 import * as CH from './charts.js';
 
 /* ------------------------------- helpers --------------------------------- */
@@ -113,6 +119,14 @@ const state = {
   activeTab: 'table',
   chartType: 'bar',
   chartModel: null,
+  /* pivot builder state — shared by the Pivot panel and the heatmap's
+     "pivot aggregation" mode, so it is configured in exactly one place */
+  pivot: { rows: [], cols: [], value: null, agg: 'mean' },
+  testSummary: null,    // last structured test run, reused by the HTML report
+  /* the open .xlsx, if any: {file, XLSX, wb, names, frames, active}. Holds the
+     parsed workbook plus lazily-converted sheets. Never serialised into the
+     URL, and cleared as soon as a CSV or a bundled sample is loaded. */
+  workbook: null,
   codeSteps: [],        // [{label, code}]
   currentCode: '',
   echartsReady: false,
@@ -120,6 +134,7 @@ const state = {
   history: [],          // pipeline snapshots *before* each change
   future: [],           // undone snapshots, for redo
   autoFilledFor: null,
+  conflictDismissedFor: null,
   shareUrl: '',
 };
 
@@ -427,10 +442,16 @@ async function parseAsync(text, name) {
 
 /* --------------------------- data ingestion ------------------------------- */
 
-function setDataFrame(columns, data, name, sourceId) {
+function setDataFrame(columns, data, name, sourceId, { keepWorkbook = false } = {}) {
   state.raw = new DataFrame(columns, data, { name });
   state.rawName = name;
   state.source = sourceId || null;
+  state.conflictDismissedFor = null;
+  /* Loading a CSV (or a bundled sample) closes any open workbook. Switching
+     between the sheets of one workbook must not, hence the flag. */
+  if (!keepWorkbook) state.workbook = null;
+  /* any newly loaded frame supersedes the "link could not be restored" banner */
+  if ($('#shareNotice')) $('#shareNotice').hidden = true;
   resetPipeline(false);
   refreshAll();
   syncUrl();
@@ -461,6 +482,9 @@ async function loadSample(id) {
   const def = SAMPLE_DEFS.find((s) => s.id === id);
   if (!def) return;
   showLoading(t('sample.loading'));
+  /* any deliberate load supersedes a stale "this link could not be restored"
+     banner; during boot this runs before the banner is ever shown */
+  if ($('#shareNotice')) $('#shareNotice').hidden = true;
   try {
     const res = await fetch(def.file, { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -496,13 +520,107 @@ async function loadText(text, name) {
 function readFile(file) {
   showLoading(t('load.file'));
   const reader = new FileReader();
+  /* A workbook is a zip: reading it as text would corrupt every byte above
+     U+007F. Branch on the extension before the reader is even opened. */
+  const asWorkbook = isWorkbookFile(file.name);
   reader.onload = async () => {
-    try { await loadText(String(reader.result), file.name); }
-    catch { toast(t('paste.failed'), 'err'); }
+    try {
+      if (asWorkbook) await loadWorkbookFile(reader.result, file.name);
+      else await loadText(String(reader.result), file.name);
+    } catch { toast(t('paste.failed'), 'err'); }
     finally { hideLoading(); }
   };
   reader.onerror = () => { hideLoading(); toast(t('paste.failed'), 'err'); };
-  reader.readAsText(file, 'utf-8');
+  if (asWorkbook) reader.readAsArrayBuffer(file);
+  else reader.readAsText(file, 'utf-8');
+}
+
+/* ------------------------------- workbooks -------------------------------- */
+
+/** Convert one sheet on demand and memoise it, so unopened sheets cost nothing. */
+function sheetFrame(entry, name) {
+  if (entry.frames.has(name)) return entry.frames.get(name);
+  const parsed = sheetToColumns(entry.XLSX, entry.wb, name);
+  entry.frames.set(name, parsed);
+  return parsed;
+}
+
+async function loadWorkbookFile(buffer, name) {
+  const XLSX = await loadXLSX();
+  if (!XLSX) { toast(t('xlsx.unavailable'), 'err'); return false; }
+
+  let wb;
+  try { wb = readWorkbook(XLSX, new Uint8Array(buffer)); }
+  catch { toast(t('xlsx.badFile'), 'err'); return false; }
+
+  const names = sheetNames(wb);
+  if (!names.length) { toast(t('xlsx.badFile'), 'err'); return false; }
+
+  state.workbook = { file: name, XLSX, wb, names, frames: new Map(), active: null };
+  // try each sheet in order — a workbook whose first sheet is a cover page
+  // should still open on something usable
+  for (const n of names) {
+    if (applySheet(n, { quiet: true })) {
+      toast(t('load.done', {
+        name: `${name} · ${n}`, rows: state.raw.nrows, cols: state.raw.ncols,
+      }), 'ok');
+      if (names.length > 1) toast(t('xlsx.sheetCount', { file: name, n: names.length }), 'info');
+      return true;
+    }
+  }
+  state.workbook = null;
+  refreshAll();
+  toast(t('xlsx.empty'), 'err');
+  return false;
+}
+
+/**
+ * Switch the frame to one sheet of the open workbook.
+ * `quiet` suppresses the toast when probing sheets during load.
+ */
+function applySheet(name, { quiet = false } = {}) {
+  const entry = state.workbook;
+  if (!entry || !entry.names.includes(name)) return false;
+
+  const parsed = sheetFrame(entry, name);
+  if (!parsed || !parsed.columns.length
+      || !parsed.columns.some((c) => parsed.data[c].length)) {
+    if (!quiet) toast(t('xlsx.emptySheet', { name }), 'err');
+    return false;
+  }
+
+  entry.active = name;
+  const label = `${entry.file} · ${name}`;
+  setDataFrame(parsed.columns, parsed.data, label, null, { keepWorkbook: true });
+  if (!quiet) {
+    toast(t('load.done', { name: label, rows: state.raw.nrows, cols: state.raw.ncols }), 'ok');
+  }
+  return true;
+}
+
+/** The sheet picker only exists while a workbook is open. */
+function renderSheetPicker() {
+  const host = $('#sheetPicker');
+  const sel = $('#sheetSelect');
+  if (!host || !sel) return;
+  const entry = state.workbook;
+  if (!entry) { host.hidden = true; return; }
+
+  host.hidden = false;
+  const sig = `${entry.file}\u0001${entry.names.join('\u0001')}`;
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.innerHTML = '';
+    for (const n of entry.names) sel.appendChild(el('option', { value: n, text: n }));
+  }
+  if (entry.active) sel.value = entry.active;
+
+  const note = $('#sheetNote');
+  if (note) {
+    note.textContent = entry.names.length > 1
+      ? t('xlsx.sheetCount', { file: entry.file, n: entry.names.length })
+      : entry.file;
+  }
 }
 
 /* ------------------------------ pipeline ---------------------------------- */
@@ -692,9 +810,42 @@ function renderPipelinePanels() {
   renderHistory();
 }
 
+/* ---------------------------- data hygiene -------------------------------- */
+/* pandas quietly turns a column holding one stray token into `object`, and
+ * every numeric operation on that column then fails — or worse, silently
+ * returns nothing. Saying so at load time beats letting the user find out
+ * three steps later. */
+
+function renderTypeConflicts() {
+  const card = $('#conflictCard');
+  const body = $('#conflictBody');
+  if (!card || !body) return;
+  const df = state.raw;
+  if (!df || state.conflictDismissedFor === state.raw) { card.hidden = true; return; }
+
+  const conflicts = columnTypeConflicts(df);
+  if (!conflicts.length) { card.hidden = true; return; }
+
+  const rows = conflicts.slice(0, 3).map((c) => {
+    const ex = c.samples
+      .map((s) => `<code>${esc(String(s.value).slice(0, 24))}</code>`)
+      .join(' ');
+    return esc(t('conflict.row', {
+      col: c.name, bad: c.total - c.numeric, total: c.total,
+    })) + ' ' + ex;
+  });
+
+  body.innerHTML = `${esc(t('conflict.body', { n: conflicts.length }))}<br/>${
+    rows.join('<br/>')}<br/><span class="muted-note">${esc(t('conflict.fix'))}</span>`;
+  card.hidden = false;
+}
+
 function refreshAll() {
+  renderTypeConflicts();
   renderKPIs();
   renderSamples();
+  renderSheetPicker();
+  renderExportMenu();
   renderColumnList();
   renderColumnControls();
   renderTable();
@@ -703,6 +854,7 @@ function refreshAll() {
   renderTests();
   renderPipelinePanels();
   renderGroupby();
+  renderPivotPanel();
   // a brand-new dataset deserves fresh, sensible chart defaults
   if (state.autoFilledFor !== state.raw) {
     state.autoFilledFor = state.raw;
@@ -888,6 +1040,40 @@ function renderColumnControls() {
     lab.innerHTML = `<input type="checkbox" value="${fn}" ${on ? 'checked' : ''}/><span>${esc(aggLabel(fn))}</span>`;
     lab.querySelector('input').addEventListener('change', (e) => lab.classList.toggle('is-on', e.target.checked));
     gbFuncs.appendChild(lab);
+  }
+
+  /* ---------------- pivot builder (click-to-assign, no drag) -------------- */
+  /* Both axes are `<select multiple>`, so they must be filled with `fillMulti`.
+     `fill` is the *single*-select helper: whenever the previous choice is gone
+     it falls back to `selectedIndex = 0`, which silently pointed rows, cols and
+     value at the frame's first column — typically an id or a timestamp. That is
+     both meaningless (pivot on a primary key) and ruinous (the grid is
+     rows × cols), so it is exactly the mistake worth designing out. */
+  const pvRows = $('#pvRows');
+  const pvCols = $('#pvCols');
+  fillMulti(pvRows, cols);
+  if (pvRows && ![...pvRows.selectedOptions].length) {
+    const cat = pickCategorical(df);
+    if (cat) [...pvRows.options].forEach((o) => { o.selected = o.value === cat; });
+  }
+  /* Left deliberately empty. No column axis yields a plain one-number summary,
+     which is the useful default; the heatmap already has its own correlation
+     view, so nothing is lost by not pre-filling a second axis. */
+  fillMulti(pvCols, cols);
+
+  const pvValue = $('#pvValue');
+  const prevValue = pvValue ? pvValue.value : null;
+  fill(pvValue, numCols, { allowEmpty: false });
+  // keep the user's measure while the same frame is on screen, but re-seed it
+  // from the ranked list when a new dataset arrives
+  if (pvValue && numCols.length && (prevValue === null || !numCols.includes(prevValue))) {
+    pvValue.value = rankedNumeric(df)[0] || numCols[0];
+  }
+
+  const pvAgg = $('#pvAgg');
+  if (pvAgg && !pvAgg.childElementCount) {
+    for (const fn of PIVOT_AGGS) pvAgg.appendChild(el('option', { value: fn, text: aggLabel(fn) }));
+    pvAgg.value = 'mean';
   }
 }
 
@@ -1182,10 +1368,12 @@ function renderValueCounts() {
 
   if (!state.echartsReady) { chartPending($('#vcChart')); return; }
   const top = rows.slice(0, 12).slice().reverse();
-  CH.renderChart($('#vcChart'), CH.horizontalBarOption(top.map((r) => r.value), top.map((r) => r.count), {
+  const vcOpt = CH.horizontalBarOption(top.map((r) => r.value), top.map((r) => r.count), {
     xName: t('stats.freq'),
     formatter: (v) => `${v} · ${((v / (state.view.nrows || 1)) * 100).toFixed(1)}%`,
-  }));
+  });
+  CH.renderChart($('#vcChart'), vcOpt);
+  renderChartA11y($('#vcChart'), vcOpt, $('#vcChartA11y'));
 }
 
 /* --------------------- missingness matrix + tests ------------------------ */
@@ -1199,6 +1387,33 @@ function renderValueCounts() {
 function chartPending(host, key = 'chart.loading') {
   if (!host) return;
   host.innerHTML = `<p class="muted-note chart-pending">${esc(t(key))}</p>`;
+}
+
+/**
+ * ECharts paints into a <canvas>, which assistive technology cannot read at
+ * all — a screen reader gets an unlabelled box. Every chart therefore also
+ * publishes a summary plus a small data table into a visually-hidden node,
+ * and the canvas itself is labelled rather than left anonymous.
+ */
+function renderChartA11y(dom, option, host) {
+  if (!dom || !host) return;
+  const info = CH.describeOption(option);
+  if (!info.rows.length) {
+    host.innerHTML = '';
+    dom.removeAttribute('role');
+    dom.removeAttribute('aria-label');
+    return;
+  }
+  const summary = t('chart.a11ySummary', {
+    s: info.seriesCount,
+    n: info.pointCount.toLocaleString(),
+  });
+  dom.setAttribute('role', 'img');
+  dom.setAttribute('aria-label', summary);
+  host.innerHTML = `<table><caption>${esc(summary)}${
+    info.truncated ? ` ${esc(t('chart.a11yTruncated'))}` : ''}</caption>
+    <thead><tr>${info.headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>${info.rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
 
 function missingChartLabels() {
@@ -1241,6 +1456,22 @@ function renderMissingChart() {
     matrix,
     labels: missingChartLabels(),
   }, CH.chartTheme()));
+
+  /* The nullity matrix is not an x/y series, so describeOption would only
+     produce row and column indices — build the alternative from the rates. */
+  const a11yHost = $('#missChartA11y');
+  if (a11yHost) {
+    const summary = t('stats.missingMapA11y', {
+      n: matrix.cols.length,
+      cells: matrix.missingCells.toLocaleString(),
+      total: matrix.totalCells.toLocaleString(),
+    });
+    host.setAttribute('role', 'img');
+    host.setAttribute('aria-label', summary);
+    a11yHost.innerHTML = `<table><caption>${esc(summary)}</caption>
+      <thead><tr><th>${esc(t('stats.column'))}</th><th>${esc(t('stats.missingCol'))}</th><th>${esc(t('stats.missingPct'))}</th></tr></thead>
+      <tbody>${matrix.cols.map((c, i) => `<tr><td>${esc(c)}</td><td>${Math.round(matrix.rates[i] * matrix.total)}</td><td>${(matrix.rates[i] * 100).toFixed(1)}%</td></tr>`).join('')}</tbody></table>`;
+  }
 }
 
 /** p-values are only interesting for a few digits, then they are just "tiny".
@@ -1371,6 +1602,75 @@ function renderTests() {
         chiInfo = { a: gCol, b: other, r };
       }
     }
+  }
+
+  /* ------------------- correlation, significance included ---------------- */
+  /* Report whichever other numeric column tracks the value column most
+     closely: "what moves with this?" is the question worth answering. */
+  let bestCorr = null;
+  for (const c of df.numericCols) {
+    if (c === vCol) continue;
+    const t2 = pearsonTest(vv, df.values(c));
+    if (t2 && (bestCorr === null || Math.abs(t2.r) > Math.abs(bestCorr.r))) {
+      bestCorr = { ...t2, col: c };
+    }
+  }
+  if (bestCorr) {
+    found.push({
+      key: 'test.pearson',
+      params: { a: vCol, b: bestCorr.col, r: CH.fmtNum(bestCorr.r, 3) },
+      stat: bestCorr.t, df: bestCorr.df, p: bestCorr.p,
+      effect: bestCorr.r, effectName: 'r',
+      scipy: `stats.pearsonr(df[${py(vCol)}], df[${py(bestCorr.col)}])`,
+    });
+  }
+
+  /* ------------------- rank-based and variance tests --------------------- */
+  if (groups.length >= 2) {
+    const lv = leveneTest(groups);
+    if (lv) {
+      found.push({
+        key: 'test.levene', params: { k: lv.k },
+        stat: lv.w, df: `${lv.df1}, ${lv.df2}`, p: lv.p,
+        effect: null, effectName: '',
+        scipy: `stats.levene(${levels.slice(0, 2).map((l) => `g[${py(l)}]`).join(', ')}${levels.length > 2 ? ', …' : ''})`,
+      });
+    }
+
+    /* Mann-Whitney is the two-group counterpart of the t-test above; the
+       rank-biserial correlation is its effect size, playing Cohen's d's role. */
+    if (levels.length === 2 && groups.length === 2) {
+      const mw = mannWhitneyU(buckets.get(levels[0]), buckets.get(levels[1]));
+      if (mw) {
+        found.push({
+          key: 'test.mannWhitney', params: { a: levels[0], b: levels[1] },
+          stat: mw.z, df: '—', p: mw.p,
+          effect: mw.rankBiserial, effectName: 'rank-biserial',
+          scipy: `stats.mannwhitneyu(${py(vCol)}[g == ${py(levels[0])}], ${py(vCol)}[g == ${py(levels[1])}], alternative="two-sided")`,
+        });
+      }
+    }
+
+    const kw = kruskalWallis(groups);
+    if (kw) {
+      found.push({
+        key: 'test.kruskal', params: { k: kw.k },
+        stat: kw.h, df: kw.df, p: kw.p,
+        effect: null, effectName: '',
+        scipy: `stats.kruskal(${levels.slice(0, 2).map((l) => `g[${py(l)}]`).join(', ')}${levels.length > 2 ? ', …' : ''})`,
+      });
+    }
+  }
+
+  /* ---------------------------- normality -------------------------------- */
+  const jb = jarqueBera(vv);
+  if (jb) {
+    found.push({
+      key: 'test.jarqueBera', params: { col: vCol },
+      stat: jb.jb, df: 2, p: jb.p,
+      effect: jb.skew, effectName: t('test.skew'),
+      scipy: `stats.jarque_bera(df[${py(vCol)}])`,
+    });
   }
 
   if (!found.length) {
@@ -1520,6 +1820,63 @@ function runQuery() {
 
 /* ------------------------------- groupby --------------------------------- */
 
+/* -------------------------------- pivot ---------------------------------- */
+/* The pivot builder lives in the groupby tab and is read straight from the
+ * DOM. One source of truth means the heatmap's "pivot aggregation" mode and
+ * the table beneath the builder can never drift apart. */
+
+function readPivotConfig() {
+  const sel = (id) => ($(id) ? [...$(id).selectedOptions].map((o) => o.value) : []);
+  return {
+    rows: sel('#pvRows'),
+    cols: sel('#pvCols'),
+    value: $('#pvValue') ? $('#pvValue').value : null,
+    agg: $('#pvAgg') ? $('#pvAgg').value : 'mean',
+  };
+}
+
+const pivotCall = (cfg) =>
+  `df.pivot_table(index=${pyList(cfg.rows)}, columns=${pyList(cfg.cols)}, `
+  + `values=${py(cfg.value)}, aggfunc=${py(cfg.agg)})`;
+
+function renderPivotPanel() {
+  const host = $('#pivotTable');
+  const df = state.view;
+  if (!host) return;
+  if (!df) { host.innerHTML = ''; return; }
+
+  const cfg = readPivotConfig();
+  state.pivot = cfg;
+  if (!cfg.rows.length || !cfg.value || !df.has(cfg.value)) {
+    host.innerHTML = `<p class="muted-note" style="padding:14px">${esc(t('pivot.needFields'))}</p>`;
+    return;
+  }
+
+  const pv = pivotTable(df, cfg);
+  if (!pv || !pv.rowKeys.length) {
+    host.innerHTML = `<p class="muted-note" style="padding:14px">${esc(t('pivot.empty'))}</p>`;
+    return;
+  }
+  /* Rendering the grid means one cell per row × column; past the budget there
+     is nothing useful to show, so say so rather than freeze the tab. */
+  if (pv.tooLarge) {
+    host.innerHTML = `<p class="muted-note" style="padding:14px">${esc(t('pivot.tooLarge', {
+      r: pv.rowKeys.length, c: pv.colKeys.length, max: pv.maxCells,
+    }))}</p>`;
+    return;
+  }
+
+  const head = `<tr><th>${esc(cfg.rows.join(' / '))}${
+    cfg.cols.length ? ` \\ ${esc(cfg.cols.join(' / '))}` : ''}</th>${
+    pv.colKeys.map((c) => `<th class="num">${esc(c || '—')}</th>`).join('')}</tr>`;
+  const body = pv.rowKeys.map((r, i) => `<tr><td>${esc(r)}</td>${
+    pv.grid[i].map((v) => `<td class="num">${v === null ? '—' : CH.fmtNum(v, 2)}</td>`).join('')
+  }</tr>`).join('');
+
+  host.innerHTML = `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>
+    <p class="muted-note test-note">${esc(t('pivot.code', { code: pivotCall(cfg) }))}</p>`;
+}
+
 function renderGroupby() {
   const sub = $('#gbSub');
   if (sub) sub.textContent = t('gb.selectHint');
@@ -1583,7 +1940,7 @@ function runGroupby(demo = false) {
 const CHART_TYPES = [
   ['bar', 'ct.bar'], ['line', 'ct.line'], ['area', 'ct.area'], ['scatter', 'ct.scatter'],
   ['hist', 'ct.hist'], ['box', 'ct.box'], ['pie', 'ct.pie'], ['heat', 'ct.heat'], ['grouped', 'ct.grouped'],
-  ['missing', 'ct.missing'], ['parallel', 'ct.parallel'], ['splom', 'ct.splom'],
+  ['missing', 'ct.missing'], ['parallel', 'ct.parallel'], ['splom', 'ct.splom'], ['qq', 'ct.qq'],
 ];
 
 const CHART_ICONS = {
@@ -1599,6 +1956,7 @@ const CHART_ICONS = {
   missing: '<svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="4" width="18" height="16" rx="1.6" stroke="currentColor" stroke-width="1.5" fill="none"/><rect x="5.5" y="6.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="10" y="6.5" width="3" height="3" fill="currentColor"/><rect x="14.5" y="6.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="5.5" y="11" width="3" height="3" fill="currentColor"/><rect x="10" y="11" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="14.5" y="11" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="5.5" y="15.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="10" y="15.5" width="3" height="3" fill="currentColor" opacity=".28"/><rect x="14.5" y="15.5" width="3" height="3" fill="currentColor"/></svg>',
   parallel: '<svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 4v16M12 4v16M19 4v16" stroke="currentColor" stroke-width="1.4" opacity=".45" stroke-linecap="round"/><path d="M5 8l7 4 7-6M5 14l7-3 7 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   splom: '<svg viewBox="0 0 24 24" width="20" height="20"><rect x="3" y="3" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><rect x="13" y="3" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><rect x="3" y="13" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><rect x="13" y="13" width="8" height="8" rx="1.2" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="6" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="8" r="1" fill="currentColor"/><circle cx="16" cy="5" r="1" fill="currentColor"/><circle cx="19" cy="8" r="1" fill="currentColor"/><circle cx="6" cy="16" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="16" cy="16" r="1" fill="currentColor"/><circle cx="19" cy="19" r="1" fill="currentColor"/></svg>',
+  qq: '<svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 20L20 4" stroke="currentColor" stroke-width="1.7" stroke-dasharray="3 2.4" fill="none" stroke-linecap="round"/><circle cx="6" cy="18" r="1.7" fill="currentColor"/><circle cx="9" cy="14.5" r="1.7" fill="currentColor"/><circle cx="12" cy="12.5" r="1.7" fill="currentColor"/><circle cx="15.5" cy="9" r="1.7" fill="currentColor"/><circle cx="19" cy="6" r="1.7" fill="currentColor"/></svg>',
 };
 
 function renderChartTypes() {
@@ -1633,13 +1991,18 @@ const FIELD_FOR = {
   area: ['x', 'y', 'series', 'agg', 'sort', 'topN', 'smooth', 'label'],
   grouped: ['x', 'y', 'series', 'agg', 'sort', 'topN', 'stack', 'label'],
   scatter: ['x', 'y', 'series', 'sort', 'topN', 'smooth'],
-  hist: ['x', 'bins', 'series', 'sort', 'topN'],
+  /* hist and qq both reduce one numeric column, and the Y picker is the only
+     one populated with numeric columns — so Y is what they must show. The old
+     entry exposed X while the code read yCol, which meant choosing a column
+     for a histogram silently did nothing. */
+  hist: ['y', 'bins', 'series', 'sort', 'topN'],
   box: ['x', 'y', 'series', 'sort', 'topN'],
   pie: ['x', 'y', 'agg', 'sort', 'topN'],
-  heat: [],
+  heat: ['heatMode'],
   missing: [],
   parallel: ['numCols', 'series', 'smooth'],
   splom: ['numCols'],
+  qq: ['y'],
 };
 
 function syncChartFields() {
@@ -1768,7 +2131,11 @@ function renderCharts() {
   let aggWord = '';
 
   /** Render and re-attach the drill-down click handler in one step. */
-  const paint = (opt) => { CH.renderChart(stage, opt); wireChartClick(); };
+  const paint = (opt) => {
+    CH.renderChart(stage, opt);
+    wireChartClick();
+    renderChartA11y(stage, opt, $('#chartA11y'));
+  };
 
   state.chartModel = null;
 
@@ -1789,6 +2156,43 @@ function renderCharts() {
 
   try {
     if (type === 'heat') {
+      const heatMode = $('#chHeatMode') ? $('#chHeatMode').value : 'corr';
+
+      /* the generic X × Y × aggregation view: same renderer, data from the
+         pivot builder instead of the correlation matrix */
+      if (heatMode === 'pivot') {
+        const cfg = readPivotConfig();
+        const pv = cfg && cfg.value && cfg.rows.length ? pivotTable(df, cfg) : null;
+        if (!pv || !pv.rowKeys.length) {
+          titleEl.textContent = '—'; subEl.textContent = '';
+          chartPlaceholder(t('chart.heatNeedsPivot'));
+          return;
+        }
+        if (pv.tooLarge) {
+          titleEl.textContent = '—';
+          subEl.textContent = '';
+          chartPlaceholder(t('pivot.tooLarge', {
+            r: pv.rowKeys.length, c: pv.colKeys.length, max: pv.maxCells,
+          }));
+          return;
+        }
+        state.chartModel = { type: 'heat', pivot: true };
+        const opt2 = CH.buildOption('heat', { pivot: pv, title: null }, {}, CH.chartTheme());
+        titleEl.textContent = `${pv.value} · ${pv.rowKeys.length} × ${pv.colKeys.length}`;
+        const call = pivotCall(cfg);
+        subEl.textContent = call;
+        CH.renderChart(stage, opt2);
+        wireChartClick();
+        dataHost.innerHTML = `<table class="data"><thead><tr><th></th>${
+          pv.colKeys.map((c) => `<th class="num">${esc(c || '—')}</th>`).join('')}</tr></thead><tbody>${
+          pv.rowKeys.map((r, i) => `<tr><td>${esc(r)}</td>${
+            pv.grid[i].map((v) => `<td class="num">${v === null ? '—' : CH.fmtNum(v, 2)}</td>`).join('')
+          }</tr>`).join('')}</tbody></table>`;
+        state.currentCode = call.replace(/\s+/g, ' ');
+        pushCode('pivot', state.currentCode);
+        return;
+      }
+
       const corr = df.corr();
       if (corr.cols.length < 2) {
         titleEl.textContent = '—'; subEl.textContent = '';
@@ -1798,6 +2202,7 @@ function renderCharts() {
       const opt2 = CH.buildOption('heat', { corr, title: null }, {}, CH.chartTheme());
       titleEl.textContent = `corr() · ${corr.cols.length} × ${corr.cols.length}`;
       subEl.textContent = 'df.corr(numeric_only=True)';
+      state.chartModel = { type: 'heat', pivot: false };
       CH.renderChart(stage, opt2);
       wireChartClick();
       dataHost.innerHTML = '';
@@ -1943,10 +2348,19 @@ function renderCharts() {
         if (!groups.has(k)) groups.set(k, []);
         groups.get(k).push([xv, yv]);
       }
+      const allPoints = [...groups.values()].flat();
+      const fit = linearFit(
+        allPoints.map((p) => p[0]),
+        allPoints.map((p) => p[1]),
+      );
       model = {
         scatter: [...groups.entries()].filter(([, p]) => p.length)
           .map(([name, points]) => ({ name: sCol ? name : `${xCol} vs ${y}`, points })),
         xName: xCol, yName: y,
+        /* one line across the whole cloud: with a series split the caller is
+           comparing groups, and a single fit would misrepresent them */
+        fit: sCol ? null : fit,
+        fitLabel: t('chart.fitLabel'),
       };
       option = CH.buildOption('scatter', model, {}, CH.chartTheme());
       titleEl.textContent = `${xCol} vs ${y}`;
@@ -1954,8 +2368,54 @@ function renderCharts() {
       state.currentCode = `df.plot.scatter(x=${py(xCol)}, y=${py(y)})`;
       pushCode('scatter', state.currentCode);
       sub2(subEl, model.scatter.reduce((a, s) => a + s.points.length, 0));
+      if (fit && fit.r2 !== null) {
+        subEl.textContent = `${subEl.textContent} · ${t('chart.fitTitle', {
+          a: CH.fmtNum(fit.slope, 3), b: CH.fmtNum(fit.intercept, 3), r2: CH.fmtNum(fit.r2, 3),
+        })}`;
+      }
       paint(option);
       dataHost.innerHTML = '';
+      return;
+    }
+
+    if (type === 'qq') {
+      const col = yCol || df.numericCols[0];
+      if (!col || !df.numericCols.includes(col)) {
+        titleEl.textContent = '—'; subEl.textContent = '';
+        chartPlaceholder(t('chart.needNumeric'));
+        return;
+      }
+      const qd = qqData(df.values(col));
+      if (!qd) {
+        titleEl.textContent = '—'; subEl.textContent = '';
+        chartPlaceholder(t('chart.needFive'));
+        return;
+      }
+      const jb = jarqueBera(df.values(col));
+      model = {
+        qq: qd,
+        labels: {
+          theoretical: t('chart.qqTheoretical'),
+          sample: t('chart.qqSample'),
+          points: t('chart.qqPoints'),
+          reference: t('chart.qqReference'),
+        },
+      };
+      state.chartModel = { type: 'qq', col, n: qd.n };
+      option = CH.buildOption('qq', model, {}, CH.chartTheme());
+      titleEl.textContent = t('chart.qqTitle', { col });
+      /* the Jarque-Bera statistic is what turns "these points look straight"
+         into a number, and it is already computed for the tests panel */
+      subEl.textContent = jb
+        ? `${t('chart.qqDesc')} · JB=${CH.fmtNum(jb.jb, 2)}, p=${fmtP(jb.p)}`
+        : t('chart.qqDesc');
+      state.currentCode = `scipy.stats.probplot(df[${py(col)}], dist="norm")`;
+      pushCode('qq', state.currentCode);
+      sub2(subEl, qd.sampled);
+      paint(option);
+      dataHost.innerHTML = `<table class="data"><thead><tr><th>${esc(t('chart.qqTheoretical'))}</th><th class="num">${esc(t('chart.qqSample'))}</th></tr></thead><tbody>${
+        qd.points.slice(0, 60).map((p) => `<tr><td class="num">${CH.fmtNum(p[0], 3)}</td><td class="num">${CH.fmtNum(p[1], 3)}</td></tr>`).join('')
+      }</tbody></table>`;
       return;
     }
 
@@ -2193,6 +2653,79 @@ function showLoading(text) {
 }
 function hideLoading() { $('#loadingVeil').hidden = true; }
 
+/* ------------------------------- exporting -------------------------------- */
+/* Six formats, one menu. CSV/JSON/XLSX carry the data, the HTML report is a
+ * self-contained snapshot with the chart pixels inlined, and the .ipynb / .py
+ * pair hand the analysis back as runnable pandas. Nothing here uploads. */
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: filename });
+  a.style.display = 'none';
+  // Firefox ignores a click on a detached anchor
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Derive a tidy file stem from whatever the dataset is currently called. */
+function exportName(ext) {
+  const stem = String(state.rawName || '')
+    .replace(/\.[^.]*$/, '')
+    .replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return `${stem || 'pandalens'}.${ext}`;
+}
+
+const EXPORT_FORMATS = [
+  { id: 'csv', labelKey: 'export.csv', hintKey: 'export.hintView' },
+  { id: 'json', labelKey: 'export.json', hintKey: 'export.hintView' },
+  { id: 'xlsx', labelKey: 'export.xlsx', hintKey: 'export.hintXlsx' },
+  { id: 'html', labelKey: 'export.html', hintKey: 'export.hintReport' },
+  { id: 'ipynb', labelKey: 'export.ipynb', hintKey: 'export.hintNotebook' },
+  { id: 'py', labelKey: 'export.py', hintKey: 'export.hintScript' },
+];
+
+function renderExportMenu() {
+  const menu = $('#exportMenu');
+  if (!menu) return;
+  menu.innerHTML = '';
+  for (const f of EXPORT_FORMATS) {
+    const b = el('button', { class: 'menu-item', type: 'button' });
+    b.setAttribute('role', 'menuitem');
+    b.appendChild(el('span', { class: 'mi-label', text: t(f.labelKey) }));
+    b.appendChild(el('span', { class: 'mi-hint', text: t(f.hintKey) }));
+    b.addEventListener('click', () => { closeExportMenu(); runExport(f.id); });
+    menu.appendChild(b);
+  }
+}
+
+function closeExportMenu() {
+  const m = $('#exportMenu');
+  if (m) m.classList.remove('is-open');
+  const b = $('#btnExport');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+
+function runExport(id) {
+  switch (id) {
+    case 'csv': return exportCsv();
+    case 'json': return exportJson();
+    case 'xlsx': return exportXlsx();
+    case 'html': return exportHtmlReport();
+    case 'ipynb': return exportIpynb();
+    case 'py': return exportPy();
+    default: return undefined;
+  }
+}
+
+function downloadText(text, filename, mime) {
+  saveBlob(new Blob([text], { type: `${mime};charset=utf-8` }), filename);
+  toast(t('export.done', { name: filename }), 'ok');
+}
+
 function exportCsv() {
   const df = state.view;
   if (!df) return;
@@ -2204,15 +2737,326 @@ function exportCsv() {
   };
   const lines = [cols.join(',')];
   for (let i = 0; i < df.nrows; i++) lines.push(cols.map((c) => q(df.values(c)[i])).join(','));
-  const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = el('a', { href: url, download: `pandalens-${Date.now()}.csv` });
-  a.click();
-  URL.revokeObjectURL(url);
-  toast(t('export.done', { name: `pandalens-export.csv` }), 'ok');
-  pushCode('export', `df.to_csv("out.csv", index=False)`);
+  const filename = exportName('csv');
+  // the BOM is what makes Excel read the file as UTF-8 rather than Latin-1
+  saveBlob(new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }), filename);
+  toast(t('export.done', { name: filename }), 'ok');
+  pushCode('export', `df.to_csv(${py(filename)}, index=False)`);
   renderCode();
 }
+
+function exportJson() {
+  const df = state.view;
+  if (!df) return;
+  const cols = visibleCols();
+  const records = [];
+  for (let i = 0; i < df.nrows; i++) {
+    const o = {};
+    for (const c of cols) {
+      const v = df.values(c)[i];
+      o[c] = v === undefined ? null : v;
+    }
+    records.push(o);
+  }
+  const filename = exportName('json');
+  downloadText(JSON.stringify(records), filename, 'application/json');
+  pushCode('export', `df.to_json(${py(filename)}, orient="records", force_ascii=False)`);
+  renderCode();
+}
+
+/** The describe() table, transposed so each column of the frame is a row. */
+function summaryRows(df) {
+  const desc = df.describe();
+  const all = df.describeAll();
+  const stats = ['count', 'mean', 'std', 'min', 'q25', 'q50', 'q75', 'max'];
+  const rows = [[
+    t('stats.column'), 'dtype', ...stats.map((s) => t(`stats.${s}`)),
+    'unique', t('stats.missingCol'), 'top', 'freq',
+  ]];
+  for (const c of df.columns) {
+    const a = all[c.name] || {};
+    const missing = typeof a.count === 'number' ? df.nrows - a.count : null;
+    if (c.type === 'number' && desc[c.name]) {
+      rows.push([
+        c.name, c.type,
+        ...stats.map((s) => {
+          const v = desc[c.name][s];
+          return v === null || v === undefined ? null : v;
+        }),
+        null, missing, null, null,
+      ]);
+    } else {
+      rows.push([
+        c.name, c.type, ...stats.map(() => null),
+        a.unique ?? null, missing, a.top ?? null, a.freq ?? null,
+      ]);
+    }
+  }
+  return rows;
+}
+
+function pivotRows(pv) {
+  // an over-budget pivot has no grid to walk; the caller skips the sheet
+  if (!pv || pv.tooLarge || !pv.grid) return [];
+  const head = [`${pv.rows.join(' / ')}${pv.cols.length ? ` \\ ${pv.cols.join(' / ')}` : ''}`,
+    ...pv.colKeys.map((c) => c || (pv.single ? pv.value : '—'))];
+  return [head, ...pv.rowKeys.map((r, i) => [r, ...pv.grid[i]])];
+}
+
+/** Every sheet the workbook export will contain, in order. */
+function buildExportSheets() {
+  const df = state.view;
+  const cols = visibleCols();
+
+  const data = [cols.slice()];
+  for (let i = 0; i < df.nrows; i++) {
+    data.push(cols.map((c) => { const v = df.values(c)[i]; return v === undefined ? null : v; }));
+  }
+  const sheets = [{ name: t('export.sheetData'), rows: data }];
+
+  if (df.numericCols.length) {
+    sheets.push({ name: t('export.sheetSummary'), rows: summaryRows(df) });
+  }
+
+  const mrows = df.missingCounts()
+    .filter((r) => r.missing > 0)
+    .sort((a, b) => b.missing - a.missing);
+  if (mrows.length) {
+    sheets.push({
+      name: t('export.sheetMissing'),
+      rows: [
+        [t('stats.column'), 'dtype', t('stats.missingCol'), t('stats.missingPct')],
+        ...mrows.map((r) => [
+          r.name, r.type, r.missing,
+          r.total ? Number(((r.missing / r.total) * 100).toFixed(2)) : 0,
+        ]),
+      ],
+    });
+  }
+
+  const cfg = readPivotConfig();
+  if (cfg.rows.length && cfg.value && df.has(cfg.value)) {
+    const rows = pivotRows(pivotTable(df, cfg));
+    if (rows.length > 1) sheets.push({ name: t('export.sheetPivot'), rows });
+  }
+  return sheets;
+}
+
+async function exportXlsx() {
+  const df = state.view;
+  if (!df) return;
+
+  const XLSX = await loadXLSX();
+  if (!XLSX) { toast(t('xlsx.unavailable'), 'err'); return; }
+
+  /* Writing a large workbook is synchronous and can take seconds. Yielding
+     once after showing the veil lets the browser actually paint it, instead of
+     handing the user a frozen tab with no explanation. */
+  showLoading(t('export.working'));
+  await new Promise((r) => setTimeout(r, 0));
+  let bytes;
+  try {
+    bytes = writeWorkbook(XLSX, buildExportSheets());
+  } catch {
+    hideLoading();
+    toast(t('export.failed'), 'err');
+    return;
+  }
+  hideLoading();
+
+  const filename = exportName('xlsx');
+  saveBlob(new Blob([bytes], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }), filename);
+  toast(t('export.done', { name: filename }), 'ok');
+  pushCode('export', `df.to_excel(${py(filename)}, index=False)`);
+  renderCode();
+}
+
+function exportPy() {
+  if (!state.view) return;
+  const filename = exportName('py');
+  downloadText(buildFullScript() + '\n', filename, 'text/x-python');
+}
+
+function exportIpynb() {
+  if (!state.view) return;
+  const df = state.view;
+  const now = new Date().toISOString();
+
+  const md = [
+    `# ${state.rawName}`,
+    '',
+    t('report.notebookIntro', { rows: df.nrows, cols: df.ncols }),
+    '',
+    `- ${t('kpi.rows')}: ${df.nrows}`,
+    `- ${t('kpi.cols')}: ${df.ncols}`,
+    `- ${t('kpi.numeric')}: ${df.numericCols.length}`,
+    `- ${t('report.generated')}: ${now}`,
+    '',
+    t('report.notebookHint'),
+  ].join('\n');
+
+  const nb = {
+    cells: [
+      { cell_type: 'markdown', metadata: {}, source: md.split('\n').map((l, i, a) => (i < a.length - 1 ? `${l}\n` : l)) },
+      { cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: buildFullScript().split('\n').map((l, i, a) => (i < a.length - 1 ? `${l}\n` : l)) },
+    ],
+    metadata: {
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' },
+      language_info: { name: 'python' },
+    },
+    nbformat: 4,
+    nbformat_minor: 5,
+  };
+
+  const filename = exportName('ipynb');
+  downloadText(JSON.stringify(nb, null, 1), filename, 'application/x-ipynb+json');
+}
+
+/* ---------------------------- the HTML report ------------------------------ */
+
+const REPORT_CSS = `
+:root{--bg:#f6f7f9;--surface:#fff;--ink:#16181d;--ink-2:#5b6272;--ink-3:#8b93a5;
+--border:#e3e6ec;--accent:#4c6ef5;--ok:#12a150;--bad:#e5484d}
+@media (prefers-color-scheme:dark){:root{--bg:#101216;--surface:#181b21;--ink:#eef0f4;
+--ink-2:#a7aebd;--ink-3:#79808f;--border:#282c35;--accent:#7f96ff;--ok:#35c07a;--bad:#ff6369}}
+*{box-sizing:border-box}
+body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--ink);
+font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1040px;margin:0 auto}
+h1{font-size:23px;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:15px;margin:32px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--border)}
+.sub{color:var(--ink-2);margin:0 0 4px;font-size:13px}
+.meta{color:var(--ink-3);font-size:12px;margin:0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:20px 0 0}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
+.kpi b{display:block;font-size:19px;font-variant-numeric:tabular-nums;margin-top:2px}
+.kpi span{font-size:11.5px;color:var(--ink-3)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+padding:4px 14px 14px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:5px 9px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+th{font-weight:600;color:var(--ink-2);font-size:11.5px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr:last-child td{border-bottom:none}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:10px;
+padding:14px;overflow-x:auto;font-size:12.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+img.chart{max-width:100%;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.sig{color:var(--ok);font-weight:600}.ns{color:var(--bad)}
+footer{margin-top:36px;padding-top:14px;border-top:1px solid var(--border);
+color:var(--ink-3);font-size:11.5px}
+.note{color:var(--ink-3);font-size:12px;margin:8px 0 0}
+`;
+
+function reportTable(head, body, { numericFrom = 1 } = {}) {
+  if (!body.length) return '';
+  const th = head.map((h, i) => `<th${i >= numericFrom ? ' class="num"' : ''}>${esc(h)}</th>`).join('');
+  const tr = body.map((r) => `<tr>${r.map((c, i) => {
+    const cls = i >= numericFrom ? ' class="num"' : '';
+    const v = c === null || c === undefined ? '—' : (typeof c === 'number' ? CH.fmtNum(c, 4) : esc(c));
+    return `<td${cls}>${v}</td>`;
+  }).join('')}</tr>`).join('');
+  return `<div class="card"><table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div>`;
+}
+
+function exportHtmlReport() {
+  const df = state.view;
+  if (!df) return;
+
+  const now = new Date();
+  const parts = [];
+
+  let missing = 0;
+  for (const c of df.columns) {
+    missing += df.values(c.name).filter((v) => v === null || v === undefined || v === '').length;
+  }
+
+  parts.push('<!DOCTYPE html>');
+  parts.push(`<html lang="${getLang() === 'zh' ? 'zh-CN' : 'en'}"><head><meta charset="utf-8">`);
+  parts.push('<meta name="viewport" content="width=device-width,initial-scale=1">');
+  parts.push(`<title>PandaLens · ${esc(state.rawName)}</title>`);
+  parts.push(`<style>${REPORT_CSS}</style></head><body><div class="wrap">`);
+  parts.push(`<h1>${esc(state.rawName)}</h1>`);
+  parts.push(`<p class="sub">${esc(t('report.subtitle', { rows: df.nrows, cols: df.ncols }))}</p>`);
+  parts.push(`<p class="meta">${esc(t('report.generated'))}: ${esc(now.toLocaleString())} · PandaLens</p>`);
+
+  parts.push('<div class="kpis">');
+  for (const [label, value] of [
+    [t('kpi.rows'), df.nrows.toLocaleString()],
+    [t('kpi.cols'), String(df.ncols)],
+    [t('kpi.numeric'), String(df.numericCols.length)],
+    [t('kpi.missing'), missing.toLocaleString()],
+  ]) {
+    parts.push(`<div class="kpi"><span>${esc(label)}</span><b>${esc(value)}</b></div>`);
+  }
+  parts.push('</div>');
+
+  /* the chart, inlined so the file opens with no network access at all */
+  const png = CH.chartPngUrl($('#mainChart'));
+  if (png) {
+    parts.push(`<h2>${esc(t('report.chart'))}</h2>`);
+    parts.push(`<img class="chart" alt="${esc(t('report.chartAlt'))}" src="${png}">`);
+    if (state.chartType) parts.push(`<p class="note">${esc(t(`ct.${state.chartType}`))}</p>`);
+  }
+
+  if (df.numericCols.length) {
+    const desc = df.describe();
+    const stats = ['count', 'mean', 'std', 'min', 'q25', 'q50', 'q75', 'max'];
+    const body = df.numericCols.map((c) => [c, ...stats.map((s) => desc[c][s])]);
+    parts.push(`<h2>${esc(t('report.describe'))}</h2>`);
+    parts.push(reportTable([t('stats.column'), ...stats.map((s) => t(`stats.${s}`))], body));
+  }
+
+  const mrows = df.missingCounts().filter((r) => r.missing > 0).sort((a, b) => b.missing - a.missing);
+  if (mrows.length) {
+    parts.push(`<h2>${esc(t('report.missing'))}</h2>`);
+    parts.push(reportTable(
+      [t('stats.column'), 'dtype', t('stats.missingCol'), t('stats.missingPct')],
+      mrows.map((r) => [r.name, r.type, r.missing, r.total ? Number(((r.missing / r.total) * 100).toFixed(2)) : 0]),
+      { numericFrom: 2 },
+    ));
+  }
+
+  if (df.numericCols.length > 1) {
+    const { cols, matrix } = df.corr();
+    parts.push(`<h2>${esc(t('report.corr'))}</h2>`);
+    parts.push(reportTable(
+      [t('stats.column'), ...cols],
+      cols.map((c, i) => [c, ...matrix[i].map((v) => (v === null ? null : v))]),
+    ));
+  }
+
+  /* reuse the exact test results the Statistics tab is showing */
+  const ts = state.testSummary;
+  if (ts && ts.found && ts.found.length) {
+    parts.push(`<h2>${esc(t('report.tests'))}</h2>`);
+    const body = ts.found.map((r) => [
+      t(r.key, r.params),
+      CH.fmtNum(r.stat, 3),
+      typeof r.df === 'number' ? r.df.toFixed(1) : r.df,
+      fmtP(r.p),
+      r.effect === null || r.effect === undefined ? '—' : `${CH.fmtNum(r.effect, 3)} ${r.effectName}`,
+      `<span class="${r.p < 0.05 ? 'sig' : 'ns'}">${esc(t(r.p < 0.05 ? 'test.significant' : 'test.notSignificant'))}</span>`,
+    ]);
+    parts.push(reportTable(
+      [t('test.name'), t('test.stat'), t('test.df'), 'p', t('test.effect'), t('test.verdict')],
+      body,
+    ));
+    parts.push(`<p class="note">${esc(t('test.note', { p: '0.05' }))} · ${esc(t('report.testsScope', { g: ts.gCol, v: ts.vCol }))}</p>`);
+  }
+
+  parts.push(`<h2>${esc(t('report.code'))}</h2>`);
+  parts.push(`<pre>${esc(buildFullScript())}</pre>`);
+
+  parts.push(`<footer>${esc(t('report.footer'))}</footer>`);
+  parts.push('</div></body></html>');
+
+  const filename = exportName('html');
+  downloadText(parts.join('\n'), filename, 'text/html');
+}
+
 
 async function copyText(text, btn) {
   try {
@@ -2313,7 +3157,26 @@ function bindEvents() {
     if (!drop.contains(e.target)) $('#colVisMenu').classList.remove('is-open');
   });
 
-  $('#btnExport').addEventListener('click', exportCsv);
+  const expDrop = $('#exportDrop');
+  $('#btnExport').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = $('#exportMenu');
+    const open = menu.classList.toggle('is-open');
+    $('#btnExport').setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.addEventListener('click', (e) => {
+    if (expDrop && !expDrop.contains(e.target)) closeExportMenu();
+  });
+
+  /* the sheet picker re-reads a sheet out of the workbook already in memory —
+     no file access, no re-upload */
+  const sheetSel = $('#sheetSelect');
+  if (sheetSel) {
+    sheetSel.addEventListener('change', () => {
+      if (!applySheet(sheetSel.value)) sheetSel.value = state.workbook ? state.workbook.active : '';
+    });
+  }
+
   $('#btnReset').addEventListener('click', () => { resetPipeline(false); refreshAll(); toast(t('load.reset'), 'info'); });
 
   /* stats */
@@ -2435,6 +3298,26 @@ function bindEvents() {
   $('#btnGroupby').addEventListener('click', () => runGroupby(false));
   $('#btnGroupbyDemo').addEventListener('click', () => runGroupby(true));
 
+  /* pivot builder: every control refreshes the table, and the heatmap too if
+     it happens to be showing the pivot aggregation */
+  const onPivotChange = () => {
+    renderPivotPanel();
+    const mode = $('#chHeatMode') ? $('#chHeatMode').value : 'corr';
+    if (state.chartType === 'heat' && mode === 'pivot') renderCharts();
+  };
+  ['#pvRows', '#pvCols', '#pvValue', '#pvAgg'].forEach((s) => {
+    if ($(s)) $(s).addEventListener('change', onPivotChange);
+  });
+  if ($('#btnPivot')) $('#btnPivot').addEventListener('click', () => {
+    renderPivotPanel();
+    toast(t('pivot.done'), 'ok');
+  });
+
+  if ($('#conflictClose')) $('#conflictClose').addEventListener('click', () => {
+    state.conflictDismissedFor = state.raw;
+    $('#conflictCard').hidden = true;
+  });
+
   /* charts */
   ['#chX', '#chY', '#chSeries', '#chAgg', '#chSort', '#chNumCols'].forEach((s) => {
     $(s).addEventListener('change', () => {
@@ -2444,10 +3327,24 @@ function bindEvents() {
   });
   ['#chTop', '#chBins'].forEach((s) => $(s).addEventListener('input', () => renderCharts()));
   ['#chStack', '#chSmooth', '#chLabel'].forEach((s) => $(s).addEventListener('change', () => renderCharts()));
+  if ($('#chHeatMode')) $('#chHeatMode').addEventListener('change', () => renderCharts());
   $('#btnChartData').addEventListener('click', () => $('#chartDataTable').classList.toggle('collapsed'));
-  $('#btnDownloadPng').addEventListener('click', () => {
-    if (CH.downloadChartPng($('#mainChart'), `pandalens-${state.chartType}.png`)) toast(t('chart.exported'), 'ok');
-  });
+
+  /* One exporter for every chart surface. The old version returned a bare
+     boolean that an `if` swallowed, so clicking before the chart finished
+     rendering did nothing at all — no download, no message. */
+  const exportPng = (sel, name) => {
+    const res = CH.downloadChartPng($(sel), name);
+    if (res.ok) toast(t('chart.exported'), 'ok');
+    else if (res.reason === 'not-ready' || res.reason === 'no-chart') toast(t('chart.pngNotReady'), 'info');
+    else toast(t('chart.pngFailed'), 'err');
+  };
+  $('#btnDownloadPng').addEventListener('click',
+    () => exportPng('#mainChart', `pandalens-${state.chartType}.png`));
+  $('#missDownloadPng').addEventListener('click',
+    () => exportPng('#missChart', 'pandalens-missingness.png'));
+  $('#vcDownloadPng').addEventListener('click',
+    () => exportPng('#vcChart', 'pandalens-value-counts.png'));
 
   /* undo / redo / share */
   $('#btnUndo').addEventListener('click', undo);
@@ -2579,7 +3476,11 @@ async function init() {
     applyPayload(payload);
     toast(t('share.loaded'), 'info');
   } else if (payload) {
-    // the link pointed at an uploaded file we cannot ship in a URL
+    /* The link pointed at an uploaded file. A toast disappears in 2.6 s and
+       leaves the user staring at somebody else's dataset wondering why; state
+       it in the page until they do something about it. */
+    const notice = $('#shareNotice');
+    if (notice) notice.hidden = false;
     toast(t('share.noData'), 'info');
   }
 

@@ -91,7 +91,15 @@ for (const m of html.matchAll(/aria-(?:controls|labelledby|describedby)="([^"]+)
 
 /* ------------------- 3. styles referenced from markup --------------------- */
 
-const cssClasses = new Set([...css.matchAll(/\.([a-zA-Z][A-Za-z0-9_-]*)/g)].map((m) => m[1]));
+/* The exported HTML report ships its own stylesheet inside a template literal.
+ * That CSS really lives in this repo, so its selectors are defined classes too
+ * — without this, every `.kpi` / `.wrap` in the report reads as unstyled. */
+const inlineCss = [...app.matchAll(/const\s+\w*_CSS\s*=\s*`([\s\S]*?)`;/g)]
+  .map((m) => m[1]).join('\n');
+
+const cssClasses = new Set(
+  [...`${css}\n${inlineCss}`.matchAll(/\.([a-zA-Z][A-Za-z0-9_-]*)/g)].map((m) => m[1]),
+);
 
 /* A class token is only meaningful if it looks like a class and contains no
  * interpolated expression, so filter before comparing. */

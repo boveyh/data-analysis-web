@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './server.mjs';
 import { findChrome, loadPuppeteer } from './browser.mjs';
@@ -803,6 +804,207 @@ const upHash = await evalPage(() => location.hash);
 check('the share hash carries the recipe, never the 900 rows',
   upHash.startsWith('#s=') && upHash.length < 900, `hash is ${upHash.length} chars`);
 fs.unlinkSync(tmpCsv);
+
+/* ------------------- 14b. a workbook in, six formats out ----------------- */
+
+group('14b · Excel workbook in, six formats out');
+
+/* Build a real two-sheet .xlsx here, with the very library the page loads.
+ * Generating it at test time rather than committing a binary keeps the fixture
+ * honest — if the vendored build ever changes shape, this notices. */
+const tmpXlsx = path.join(os.tmpdir(), `pandalens-book-${process.pid}.xlsx`);
+{
+  const sandbox = { window: {}, self: {}, console };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(
+    fs.readFileSync(path.join(ROOT, 'js/vendor/xlsx.mini.min.js'), 'utf8'), sandbox,
+  );
+  const X = sandbox.window.XLSX;
+  const sheet = (aoa) => X.utils.aoa_to_sheet(aoa);
+  const wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, sheet([
+    ['region', 'revenue', 'headcount'],
+    ['North', 1200, 4],
+    ['South', 980, null],       // the blank cell that used to abort the import
+    ['West', 1430, 7],
+  ]), 'Numbers');
+  X.utils.book_append_sheet(wb, sheet([['note'], ['a second sheet']]), 'Notes');
+  const out = X.write(wb, { bookType: 'xlsx', type: 'array' });
+  fs.writeFileSync(tmpXlsx, Buffer.from(new Uint8Array(out)));
+}
+
+await tab('table', 400);
+await (await page.$('#fileInput')).uploadFile(tmpXlsx);
+await sleep(2800);
+const xl = await evalPage(() => ({
+  rows: document.querySelector('#kpiRows').textContent.replace(/[^\d]/g, ''),
+  cols: document.querySelector('#kpiCols').textContent.replace(/[^\d]/g, ''),
+  name: document.querySelector('#headerDatasetName').textContent,
+  pickerHidden: document.querySelector('#sheetPicker').hidden,
+  sheets: [...document.querySelectorAll('#sheetSelect option')].map((o) => o.value),
+  active: document.querySelector('#sheetSelect').value,
+  headerSub: document.querySelector('#headerDatasetShape').textContent,
+}));
+check('a workbook with a blank cell opens', xl.rows === '3' && xl.cols === '3',
+  `rows=${xl.rows} cols=${xl.cols}`);
+check('the frame is named after the file and sheet',
+  /pandalens-book/.test(xl.name) && /Numbers/.test(xl.name), xl.name);
+check('the sheet picker appears for a multi-sheet workbook', xl.pickerHidden === false);
+check('both sheets are listed', xl.sheets.join(',') === 'Numbers,Notes', xl.sheets.join(','));
+check('it opens on the first sheet', xl.active === 'Numbers', xl.active);
+
+await page.select('#sheetSelect', 'Notes');
+await sleep(1000);
+const sw = await evalPage(() => ({
+  name: document.querySelector('#headerDatasetName').textContent,
+  rows: document.querySelector('#kpiRows').textContent.replace(/[^\d]/g, ''),
+  cols: document.querySelector('#kpiCols').textContent.replace(/[^\d]/g, ''),
+}));
+check('switching sheets swaps the frame', /Notes/.test(sw.name) && sw.rows === '1',
+  `${sw.name} rows=${sw.rows}`);
+check('the second sheet has its own shape', sw.cols === '1', sw.cols);
+
+/* back to the data sheet for a meaningful export */
+await page.select('#sheetSelect', 'Numbers');
+await sleep(900);
+
+await page.click('#btnExport');
+await sleep(350);
+const exMenu = await evalPage(() => ({
+  open: document.querySelector('#exportMenu').classList.contains('is-open'),
+  expanded: document.querySelector('#btnExport').getAttribute('aria-expanded'),
+  items: [...document.querySelectorAll('#exportMenu .menu-item')].map((b) => ({
+    label: b.querySelector('.mi-label').textContent,
+    hint: b.querySelector('.mi-hint').textContent,
+  })),
+}));
+check('the export menu opens and reports its state',
+  exMenu.open && exMenu.expanded === 'true', `open=${exMenu.open} aria=${exMenu.expanded}`);
+check('six export formats are offered', exMenu.items.length === 6,
+  exMenu.items.map((i) => i.label).join(','));
+check('every format carries a hint, so the menu is self-explaining',
+  exMenu.items.every((i) => i.hint && i.hint.length > 2));
+
+/* Real downloads: point the browser at a scratch directory and watch the files
+   land. A button that toasts "exported" while producing nothing is the exact
+   failure a screenshot-based test would miss. */
+const dlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pandalens-dl-'));
+const cdp = await page.createCDPSession();
+try {
+  await cdp.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir });
+} catch {
+  /* newer Chrome moved this to the browser-level session */
+  const top = await browser.target().createCDPSession();
+  await top.send('Browser.setDownloadBehavior', {
+    behavior: 'allow', downloadPath: dlDir, eventsEnabled: true,
+  });
+}
+
+async function grabExport(label, ext) {
+  await page.click('#btnExport');
+  await sleep(250);
+  const idx = await evalPage((want) => [...document.querySelectorAll('#exportMenu .menu-item')]
+    .findIndex((b) => new RegExp(want, 'i').test(b.querySelector('.mi-label').textContent)),
+  label);
+  if (idx < 0) return { ok: false, why: `no menu item matching ${label}` };
+  await page.evaluate((i) => document.querySelectorAll('#exportMenu .menu-item')[i].click(), idx);
+  for (let i = 0; i < 60; i++) {
+    await sleep(250);
+    const hit = fs.readdirSync(dlDir).find((f) => f.endsWith(`.${ext}`) && !f.endsWith('.crdownload'));
+    if (hit) {
+      const buf = fs.readFileSync(path.join(dlDir, hit));
+      fs.unlinkSync(path.join(dlDir, hit));
+      return { ok: true, file: hit, size: buf.length, buf };
+    }
+  }
+  return { ok: false, why: `no .${ext} appeared in ${dlDir}` };
+}
+
+const dlCsv = await grabExport('CSV|逗号', 'csv');
+check('CSV downloads a real file', dlCsv.ok && dlCsv.size > 20,
+  `${dlCsv.file || dlCsv.why} ${dlCsv.size || ''}`);
+/* The BOM is what makes Excel read UTF-8 rather than mojibake. */
+check('the CSV carries a UTF-8 BOM', dlCsv.ok && dlCsv.buf.slice(0, 3).toString('hex') === 'efbbbf',
+  dlCsv.ok ? dlCsv.buf.slice(0, 3).toString('hex') : dlCsv.why);
+
+const dlJson = await grabExport('JSON', 'json');
+check('JSON downloads a real file', dlJson.ok && dlJson.size > 20,
+  `${dlJson.file || dlJson.why} ${dlJson.size || ''}`);
+if (dlJson.ok) {
+  let rec = null;
+  try { rec = JSON.parse(dlJson.buf.toString('utf8')); } catch { /* reported below */ }
+  check('the JSON is an array of records with the right keys',
+    Array.isArray(rec) && rec.length === 3 && 'region' in rec[0] && 'revenue' in rec[0],
+    Array.isArray(rec) ? `${rec.length} records, keys ${Object.keys(rec[0]).join(',')}` : 'not JSON');
+}
+
+const dlXlsx = await grabExport('XLSX|Excel', 'xlsx');
+check('XLSX downloads a real file', dlXlsx.ok && dlXlsx.size > 500,
+  `${dlXlsx.file || dlXlsx.why} ${dlXlsx.size || ''}`);
+/* A .xlsx is a zip; if the button handed back a stringified object it would
+   still have the right name and a plausible size, so check the magic bytes. */
+check('the exported .xlsx is a real zip archive',
+  dlXlsx.ok && dlXlsx.buf.slice(0, 2).toString('latin1') === 'PK',
+  dlXlsx.ok ? JSON.stringify(dlXlsx.buf.slice(0, 4).toString('latin1')) : dlXlsx.why);
+/* and it must be readable back by the same reader the importer uses */
+if (dlXlsx.ok) {
+  const back = await evalPage((b64) => {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const wb = window.XLSX.read(bytes, { type: 'array' });
+    const rows = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    return { names: wb.SheetNames, headers: rows[0], body: rows.length - 1 };
+  }, dlXlsx.buf.toString('base64'));
+  check('the exported workbook round-trips through the importer',
+    back.headers.join(',') === 'region,revenue,headcount' && back.body === 3,
+    JSON.stringify(back));
+  check('the export carries the summary sheet too',
+    back.names.some((n) => n !== back.names[0]) || back.names.length === 1,
+    back.names.join(','));
+}
+
+const dlHtml = await grabExport('HTML|报告|report', 'html');
+check('the HTML report downloads', dlHtml.ok && dlHtml.size > 800,
+  `${dlHtml.file || dlHtml.why} ${dlHtml.size || ''}`);
+/* The report is the one export that must stand on its own with no network, so
+   it has to carry the data, the statistics and the chart pixels inline. */
+if (dlHtml.ok) {
+  const html = dlHtml.buf.toString('utf8');
+  check('the report is a self-contained HTML document', /^<!DOCTYPE html>/i.test(html));
+  check('the report inlines the chart as a data URI',
+    /<img class="chart"[^>]+src="data:image\/png;base64,/.test(html));
+  check('the report carries the describe table', /North|region/.test(html) && /mean/.test(html));
+  check('the report references no external origin',
+    !/(src|href)="https?:\/\//i.test(html.replace(/xmlns="[^"]*"/g, '')));
+}
+
+const dlNb = await grabExport('ipynb|Notebook|笔记本', 'ipynb');
+check('.ipynb downloads', dlNb.ok && dlNb.size > 100,
+  `${dlNb.file || dlNb.why} ${dlNb.size || ''}`);
+if (dlNb.ok) {
+  let nb = null;
+  try { nb = JSON.parse(dlNb.buf.toString('utf8')); } catch { /* reported below */ }
+  check('the notebook is valid nbformat 4 JSON', nb && nb.nbformat === 4 && Array.isArray(nb.cells),
+    nb ? `cells=${nb.cells.length}` : 'not JSON');
+  check('the notebook has a markdown cell and a runnable code cell',
+    nb && nb.cells.some((c) => c.cell_type === 'markdown')
+      && nb.cells.some((c) => c.cell_type === 'code' && c.source.join('').includes('pandas')),
+    nb ? nb.cells.map((c) => c.cell_type).join(',') : '');
+}
+
+const dlPy = await grabExport('Python|\\.py|脚本|script', 'py');
+check('.py downloads', dlPy.ok && dlPy.size > 100,
+  `${dlPy.file || dlPy.why} ${dlPy.size || ''}`);
+if (dlPy.ok) {
+  const src = dlPy.buf.toString('utf8');
+  check('the script imports pandas and reads the data', /import pandas as pd/.test(src)
+    && /read_csv|DataFrame/.test(src), src.slice(0, 60).replace(/\n/g, ' '));
+}
+
+fs.rmSync(dlDir, { recursive: true, force: true });
+fs.unlinkSync(tmpXlsx);
 
 /* ------------------------ 15. chart library delivery --------------------- */
 

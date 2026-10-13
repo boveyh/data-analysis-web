@@ -332,24 +332,87 @@ export function buildOption(type, model, cfg, t = theme()) {
 
     /* ------------------------------ scatter ------------------------------ */
     case 'scatter': {
+      const scatterSeries = model.scatter.map((s) => ({
+        name: s.name,
+        type: 'scatter',
+        symbolSize: 9,
+        itemStyle: { opacity: 0.78, borderColor: t.surface, borderWidth: 1 },
+        emphasis: { focus: 'series', itemStyle: { opacity: 1 } },
+        data: s.points,
+      }));
+
+      /* Least-squares line, when the caller supplied a fit. Drawn last so it
+         sits on top of the cloud; silent so it never swallows a hover. */
+      if (model.fit) {
+        const { slope, intercept, xRange } = model.fit;
+        const [x0, x1] = xRange;
+        scatterSeries.push({
+          name: model.fitLabel || 'fit',
+          type: 'line',
+          silent: true,
+          symbol: 'none',
+          z: 5,
+          data: [[x0, slope * x0 + intercept], [x1, slope * x1 + intercept]],
+          lineStyle: { width: 2.2, type: 'dashed', color: t.text2 },
+          itemStyle: { color: t.text2 },
+          tooltip: { show: false },
+          emphasis: { disabled: true },
+        });
+      }
+
       return {
         ...opt,
         tooltip: {
           ...opt.tooltip,
           trigger: 'item',
-          formatter: (p) => `${p.seriesName}<br/><b>${model.xName}</b> ${fmtNum(p.value[0])}<br/><b>${model.yName}</b> ${fmtNum(p.value[1])}`,
+          formatter: (p) => (p.seriesType === 'line'
+            ? `${p.seriesName}<br/><b>${fmtNum(p.value[0])} → ${fmtNum(p.value[1])}</b>`
+            : `${p.seriesName}<br/><b>${model.xName}</b> ${fmtNum(p.value[0])}<br/><b>${model.yName}</b> ${fmtNum(p.value[1])}`),
         },
         // no axis names here — the card title already reads "<x> vs <y>"
         xAxis: { ...valAxis(t, ''), scale: true },
         yAxis: { ...valAxis(t, ''), scale: true },
-        series: model.scatter.map((s) => ({
-          name: s.name,
-          type: 'scatter',
-          symbolSize: 9,
-          itemStyle: { opacity: 0.78, borderColor: t.surface, borderWidth: 1 },
-          emphasis: { focus: 'series', itemStyle: { opacity: 1 } },
-          data: s.points,
-        })),
+        series: scatterSeries,
+      };
+    }
+
+    /* ------------------------------ normal QQ ---------------------------- */
+    case 'qq': {
+      const { points, slope, intercept } = model.qq;
+      const theoretical = points.map((p) => p[0]);
+      const lo = Math.min(...theoretical), hi = Math.max(...theoretical);
+      return {
+        ...opt,
+        tooltip: {
+          ...opt.tooltip,
+          trigger: 'item',
+          formatter: (p) => (p.seriesType === 'line'
+            ? `${p.seriesName}`
+            : `${model.labels.theoretical} ${fmtNum(p.value[0], 3)}<br/>${model.labels.sample} ${fmtNum(p.value[1], 3)}`),
+        },
+        xAxis: { ...valAxis(t, model.labels.theoretical), scale: true },
+        yAxis: { ...valAxis(t, model.labels.sample), scale: true },
+        legend: { show: false },
+        series: [
+          {
+            name: model.labels.points,
+            type: 'scatter',
+            symbolSize: 8,
+            itemStyle: { opacity: 0.8, borderColor: t.surface, borderWidth: 1 },
+            emphasis: { itemStyle: { opacity: 1 } },
+            data: points,
+          },
+          {
+            name: model.labels.reference,
+            type: 'line',
+            silent: true,
+            symbol: 'none',
+            z: 5,
+            data: [[lo, slope * lo + intercept], [hi, slope * hi + intercept]],
+            lineStyle: { width: 2, type: 'dashed', color: t.text2 },
+            itemStyle: { color: t.text2 },
+          },
+        ],
       };
     }
 
@@ -432,44 +495,70 @@ export function buildOption(type, model, cfg, t = theme()) {
       };
     }
 
-    /* ---------------------------- correlation ---------------------------- */
+    /* -------------------- heatmap: correlation or pivot ------------------- */
     case 'heat': {
-      const { cols, matrix } = model.corr;
+      /* Two shapes land here: the correlation matrix (model.corr, always
+         −1..1 and diverging) and a generic pivot (model.pivot, whose range
+         comes from the data). Everything downstream of the numbers is shared. */
+      const pv = model.pivot || null;
+      const xKeys = pv ? pv.colKeys : model.corr.cols;
+      const yKeys = pv ? pv.rowKeys : model.corr.cols;
+      const cellAt = pv
+        ? (i, j) => pv.grid[i][j]
+        : (i, j) => model.corr.matrix[i][j];
+
       const flat = [];
-      let min = 1, max = -1;
-      for (let i = 0; i < cols.length; i++) {
-        for (let j = 0; j < cols.length; j++) {
-          const v = matrix[i][j];
-          flat.push([j, i, v === null ? '-' : Number(v.toFixed(3))]);
-          if (v !== null) { min = Math.min(min, v); max = Math.max(max, v); }
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < yKeys.length; i++) {
+        for (let j = 0; j < xKeys.length; j++) {
+          const v = cellAt(i, j);
+          if (v === null || v === undefined || Number.isNaN(Number(v))) {
+            flat.push([j, i, '-']);
+            continue;
+          }
+          const num = Number(v);
+          flat.push([j, i, Number(num.toFixed(3))]);
+          if (num < lo) lo = num;
+          if (num > hi) hi = num;
         }
       }
+      if (!Number.isFinite(lo)) { lo = -1; hi = 1; }
+      if (lo === hi) { lo -= 1; hi += 1; }
+
+      // correlation always keeps its natural −1..1 frame
+      const vmin = pv ? lo : -1;
+      const vmax = pv ? hi : 1;
+      const label = pv ? `${pv.value} · ${pv.agg}` : 'r';
+
       return {
         ...opt,
         grid: { left: 8, right: 76, top: 30, bottom: 8, containLabel: true },
+        legend: { show: false },
         tooltip: {
           ...opt.tooltip, trigger: 'item',
-          formatter: (p) => `${cols[p.value[1]]} × ${cols[p.value[0]]}<br/><b>r = ${p.value[2]}</b>`,
+          formatter: (p) => (p.value[2] === '-'
+            ? `${yKeys[p.value[1]]} × ${xKeys[p.value[0]]}<br/><i>—</i>`
+            : `${yKeys[p.value[1]]} × ${xKeys[p.value[0]]}<br/><b>${label} = ${p.value[2]}</b>`),
         },
-        xAxis: { type: 'category', data: cols, ...axisCommon(t), splitLine: { show: false },
-          axisLabel: { color: t.text3, fontFamily: t.font, fontSize: 10.5, rotate: cols.length > 6 ? 38 : 0, hideOverlap: true } },
-        yAxis: { type: 'category', data: cols, ...axisCommon(t), splitLine: { show: false },
-          axisLabel: { color: t.text3, fontFamily: t.font, fontSize: 10.5 } },
+        xAxis: { type: 'category', data: xKeys, ...axisCommon(t), splitLine: { show: false },
+          axisLabel: { color: t.text3, fontFamily: t.font, fontSize: 10.5, rotate: xKeys.length > 6 ? 38 : 0, hideOverlap: true } },
+        yAxis: { type: 'category', data: yKeys, ...axisCommon(t), splitLine: { show: false },
+          axisLabel: { color: t.text3, fontFamily: t.font, fontSize: 10.5, hideOverlap: true } },
         visualMap: {
-          min: -1, max: 1, calculable: true, orient: 'vertical', right: 6, top: 'middle',
+          min: vmin, max: vmax, calculable: true, orient: 'vertical', right: 6, top: 'middle',
           itemWidth: 12, itemHeight: 130,
           textStyle: { color: t.text3, fontFamily: t.font, fontSize: 10 },
           inRange: { color: divergingRamp() },
-          formatter: (v) => Number(v).toFixed(1),
+          formatter: (v) => Number(v).toFixed(vmax >= 1000 ? 0 : 1),
         },
         series: [{
-          name: 'corr',
+          name: pv ? pv.value : 'corr',
           type: 'heatmap',
           data: flat,
           label: {
-            show: cols.length <= 10,
+            show: xKeys.length <= 10 && yKeys.length <= 14,
             color: t.text, fontFamily: t.font, fontSize: 10,
-            formatter: (p) => (p.value[2] === '-' ? '' : p.value[2].toFixed(2)),
+            formatter: (p) => (p.value[2] === '-' ? '' : Number(p.value[2]).toFixed(vmax >= 100 ? 0 : 2)),
           },
           itemStyle: { borderColor: t.surface, borderWidth: 2, borderRadius: 3 },
           emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(16,24,40,.3)' } },
@@ -834,13 +923,98 @@ export function resizeAll() {
   });
 }
 
-export function downloadChartPng(dom, filename) {
+/**
+ * The current chart as a PNG data URL, or null if it cannot be captured.
+ *
+ * Split out from `downloadChartPng` so the HTML report can embed the same
+ * pixels without triggering a second download.
+ *
+ * A hidden panel has no layout box, so ECharts' canvas is 0x0 and
+ * `getDataURL` returns the degenerate string `"data:,"` instead of throwing —
+ * meaning a report exported from the Table tab would silently lose its chart.
+ * When that happens the instance is temporarily given a real canvas size,
+ * captured, and resized back, so the capture no longer depends on which tab
+ * the user happens to be looking at.
+ */
+export function chartPngUrl(dom, { width = 1200, height = 640 } = {}) {
+  if (!dom) return null;
   const c = instances.get(dom);
-  if (!c) return false;
-  const url = c.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: cssVar('--surface') });
+  if (!c) return null;
+  if (c.isDisposed?.()) return null;
+
+  const collapsed = !dom.clientWidth || !dom.clientHeight;
+  try {
+    if (collapsed) c.resize({ width, height, silent: true });
+    const url = c.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: cssVar('--surface') });
+    if (collapsed) c.resize({ silent: true });
+    /* Validate the payload, not just the prefix: a blank canvas yields
+       "data:," which starts with nothing useful and is only 6 characters. */
+    return url && url.startsWith('data:image') && url.length > 512 ? url : null;
+  } catch {
+    if (collapsed) { try { c.resize({ silent: true }); } catch { /* nothing to restore */ } }
+    return null;
+  }
+}
+
+/**
+ * Save a rendered chart as a PNG.
+ *
+ * Returns a result object rather than a bare boolean: the old `false` return
+ * was swallowed by an `if (...) toast(...)`, so a chart that had not finished
+ * rendering made the button look broken with no explanation.
+ */
+export function downloadChartPng(dom, filename) {
+  if (!dom) return { ok: false, reason: 'no-chart' };
+  const c = instances.get(dom);
+  if (!c) return { ok: false, reason: 'not-ready' };
+  if (c.isDisposed?.()) return { ok: false, reason: 'disposed' };
+
+  const url = chartPngUrl(dom);
+  if (url === null) return { ok: false, reason: 'empty' };
+
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  return true;
+  a.remove();
+  return { ok: true, bytes: url.length };
+}
+
+/** True when a chart box currently has a live ECharts instance attached. */
+export function hasChartInstance(dom) { return !!dom && instances.has(dom); }
+
+/**
+ * A text alternative for a chart. ECharts paints to a canvas, which assistive
+ * technology cannot read at all; this flattens the same option into a table a
+ * screen reader can walk. Capped, so a 10k-point scatter does not become a
+ * novel — the point is the shape, not every value.
+ */
+export function describeOption(option, { maxSeries = 8, maxPoints = 40 } = {}) {
+  const out = { seriesCount: 0, pointCount: 0, headers: [], rows: [], truncated: false };
+  if (!option || !Array.isArray(option.series)) return out;
+
+  const xAxis = Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis;
+  const cats = xAxis?.data || [];
+  out.headers = ['series', 'x', 'y'];
+  out.seriesCount = option.series.length;
+
+  for (const s of option.series.slice(0, maxSeries)) {
+    const data = Array.isArray(s.data) ? s.data : [];
+    if (s.type === 'boxplot') continue;           // five-number summary, not x/y
+    out.pointCount += data.length;
+
+    for (let i = 0; i < Math.min(data.length, maxPoints); i++) {
+      const d = data[i];
+      let x, y;
+      if (Array.isArray(d)) { x = fmtNum(d[0]); y = fmtNum(d[1]); }
+      else if (d && typeof d === 'object') { x = d.name ?? cats[i] ?? String(i + 1); y = fmtNum(d.value); }
+      else { x = cats[i] ?? String(i + 1); y = fmtNum(d); }
+      out.rows.push([s.name || '', String(x), String(y)]);
+    }
+    if (data.length > maxPoints) out.truncated = true;
+  }
+  if (option.series.length > maxSeries) out.truncated = true;
+  return out;
 }
