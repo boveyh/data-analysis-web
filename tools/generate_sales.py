@@ -80,7 +80,9 @@ for _ in range(320):
 out = Path(__file__).resolve().parent.parent / "data" / "sales.csv"
 out.parent.mkdir(parents=True, exist_ok=True)
 with out.open("w", newline="", encoding="utf-8") as fh:
-    writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+    # lineterminator must be "\n": csv's default is "\r\n", which would make this
+    # the only CRLF file in the repo and disagree with .gitattributes (eol=lf).
+    writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()), lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
 

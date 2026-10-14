@@ -152,7 +152,7 @@ npx serve -l 5173 .
 
 ```bash
 npm test          # 引擎自测 + 接线审计 + pandas 对照 + Excel 往返
-npm run test:e2e  # 真实 Chrome 里跑 167 项端到端断言
+npm run test:e2e  # 真实 Chrome 里跑 171 项端到端断言
 npm run test:all  # 全部
 ```
 
@@ -163,7 +163,7 @@ npm run test:all  # 全部
 | `npm run test:xlsx` | Excel 往返：空单元格、日期、空行、非法工作表名去重、`.xls` 必须被明确拒绝 | 15 项 |
 | `npm run test:audit` | 静态接线检查：`app.js` 选中的每个 `#id` 是否存在于 `index.html`、用到的每个词条是否在 zh/en 双侧定义且插值占位符一致、HTML/JS 里出现的每个 CSS 类是否真的被样式表定义（**包括导出的 HTML 报告里的内联样式表**）、重复 id 与失效的 `aria-*` 引用 | 360 词条 / 150 id / 155 类 |
 | `npm run test:bench` | 引擎基准，同时充当算法复杂度回归门 | 10 个操作 |
-| `npm run test:e2e` | 起一个真实的 HTTP 服务，在真实 Chrome 里验证：模块与 Worker 能加载、爬遍 6 个标签页、缺失矩阵与检验表格渲染、撤销/重做（含快捷键）、分享链接往返恢复、图表点击下钻、虚拟滚动窗口填满视口、色盲调色板、无障碍属性、深色主题、**Excel 上传 + 工作表切换**、**六种导出格式各自真的落地成文件**（并回读校验内容）、**零 console 报错**。中段专门跑**拖入自备 CSV 的完整链路**：解析 → 统计 → 缺失图 → 假设检验 → 图表 → 筛选 → 撤销 → 分享链接 | **167 项** |
+| `npm run test:e2e` | 起一个真实的 HTTP 服务，在真实 Chrome 里验证：模块与 Worker 能加载、爬遍 6 个标签页、缺失矩阵与检验表格渲染、撤销/重做（含快捷键）、分享链接往返恢复、图表点击下钻、虚拟滚动窗口填满视口、**筛选值输入框逐字符连续输入且不丢焦点**、色盲调色板、无障碍属性、深色主题、**Excel 上传 + 工作表切换**、**六种导出格式各自真的落地成文件**（并回读校验内容）、**零 console 报错**。中段专门跑**拖入自备 CSV 的完整链路**：解析 → 统计 → 缺失图 → 假设检验 → 图表 → 筛选 → 撤销 → 分享链接 | **171 项** |
 
 > 端到端测试需要本机有 Chrome/Chromium，并安装 `puppeteer-core`（`npm i` 即可）。Chrome 的查找顺序是 `CHROME_PATH` → puppeteer 缓存 → 各系统常见安装路径，也可以用 `NODE_PATH` 指向已有的 `node_modules`。
 
@@ -284,7 +284,7 @@ data-analysis-web/
 │   └── e2e/
 │       ├── server.mjs      # 零依赖静态服务器（测试与本地预览共用）
 │       ├── browser.mjs     # 定位 Chrome 并加载 puppeteer-core
-│       ├── smoke.mjs       # 真实浏览器端到端断言（167 项）
+│       ├── smoke.mjs       # 真实浏览器端到端断言（171 项）
 │       └── screenshots.mjs # 各界面截图，便于人工审阅
 ├── .github/workflows/ci.yml # CI：引擎 / 对照 / 基准 + 浏览器端到端
 └── .nojekyll
