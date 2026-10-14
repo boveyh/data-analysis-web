@@ -387,6 +387,59 @@ await evalPage(() => {
 await sleep(400);
 check('history rows are clickable and stable', (await readState()).histItems === 1);
 
+/* ------------- 6b. live typing must survive a re-render ------------------ */
+/* The filter panel used to be rebuilt on every keystroke. Rebuilding replaces
+   the <input> the caret lives in, so only the first character landed in the
+   field and the rest went to <body> — typing "beijing" got you "b". Any control
+   that redraws on `input` has to leave its own node alone. */
+
+group('6b · typing in live controls');
+await tab('filter', 400);
+await page.click('#btnAddFilter');
+await sleep(350);
+
+const typed = await evalPage(() => {
+  const input = document.querySelector('#filterRows .filter-row input.input');
+  input.focus();
+  for (const ch of 'beijing') {
+    input.value += ch;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  const live = document.querySelector('#filterRows .filter-row input.input');
+  return { value: live ? live.value : null, focused: document.activeElement === live };
+});
+check('a filter value typed char by char survives',
+  typed.value === 'beijing', `got=${JSON.stringify(typed.value)}`);
+check('the caret stays in the filter value field', typed.focused === true);
+
+/* the histogram bin count redraws the chart on input as well */
+await tab('charts', 350);
+await evalPage(() => document.querySelector('.chart-type[data-type="hist"]').click());
+await sleep(500);
+const binsShown = await evalPage(() => !document.querySelector('#binsField').hidden);
+check('histogram bin field is shown', binsShown === true);
+if (binsShown) {
+  const bins = await evalPage(() => {
+    const input = document.querySelector('#chBins');
+    input.value = '';
+    input.focus();
+    for (const ch of '150') {
+      input.value += ch;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return document.querySelector('#chBins').value;
+  });
+  check('the bin count survives char-by-char typing', bins === '150', `got=${bins}`);
+}
+
+/* leave the pipeline as it was so the next section starts clean */
+await tab('filter', 300);
+await evalPage(() => {
+  const rm = document.querySelector('#filterRows .filter-row .rm');
+  if (rm) rm.click();
+});
+await sleep(300);
+
 /* ---------------------------- 7. share URL ------------------------------- */
 
 group('7 · shareable URL state');

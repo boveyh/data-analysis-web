@@ -1740,7 +1740,11 @@ function renderFilterPanel() {
     const valInput = el('input', { class: 'input', value: f.value });
     valInput.placeholder = t('filter.value');
     valInput.disabled = ['isna', 'notna'].includes(f.op);
-    valInput.addEventListener('input', () => { f.value = valInput.value; rebuild(); renderAfterFilter(); });
+    valInput.addEventListener('input', () => {
+      f.value = valInput.value;
+      rebuild();
+      renderAfterFilter({ keepFilterPanel: true });
+    });
     /* typing re-filters live, but only one undo step is kept for the whole edit:
        the "before" state is captured on focus and committed on blur. */
     let beforeEdit = null;
@@ -1778,7 +1782,7 @@ function renderFilterPanel() {
   }
 }
 
-function renderAfterFilter() {
+function renderAfterFilter(opts) {
   renderKPIs();
   renderTable();
   renderStats();
@@ -1787,7 +1791,12 @@ function renderAfterFilter() {
   renderValueCounts();
   renderCharts();
   renderCode();
-  renderPipelinePanels();
+  /* `keepFilterPanel` is for the one caller that runs while the user is typing
+     in a filter row: rebuilding those rows swaps the <input> node the caret
+     lives in, so the next keystroke lands on <body> instead of the field. The
+     history list is safe to redraw — it holds no editable nodes. */
+  if (opts && opts.keepFilterPanel) renderHistory();
+  else renderPipelinePanels();
 }
 
 /** pandas-style string literal for source code (single-quoted, escaped). */
